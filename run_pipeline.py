@@ -28,6 +28,16 @@ Examples
     python run_pipeline.py query-logs --player 8478402
     python run_pipeline.py query-logs --team TOR
 
+# Fetch team game stats + goalie logs for a specific date:
+    python run_pipeline.py gamestats --date 2026-01-15
+
+# Fetch team game stats + goalie logs for the whole season:
+    python run_pipeline.py gamestats --season
+
+# Export the modelling dataset (skater-game rows + binary target):
+    python run_pipeline.py dataset
+    python run_pipeline.py dataset --team TOR --out tor_dataset.json
+
 # Query games stored in the local DB:
     python run_pipeline.py games --date 2026-01-15
     python run_pipeline.py games --team TOR
@@ -136,6 +146,29 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Also fetch playoff game logs",
     )
     p_gl.add_argument("--force", action="store_true", help="Bypass cache")
+
+    # ---- gamestats ----------------------------------------------------
+    p_gs = sub.add_parser(
+        "gamestats",
+        help="Fetch per-game team stats and goalie logs (right-rail + boxscore)",
+    )
+    gs_grp = p_gs.add_mutually_exclusive_group(required=True)
+    gs_grp.add_argument("--date",   metavar="YYYY-MM-DD",
+                        help="Fetch stats for all FINAL games on this date")
+    gs_grp.add_argument("--season", action="store_true",
+                        help="Fetch stats for every FINAL game this season")
+    p_gs.add_argument("--force", action="store_true", help="Bypass cache")
+
+    # ---- dataset ------------------------------------------------------
+    p_ds = sub.add_parser(
+        "dataset",
+        help="Export the player_point_dataset view (modelling-ready, with binary target)",
+    )
+    p_ds.add_argument("--team", metavar="ABBR", help="Filter to one team")
+    p_ds.add_argument(
+        "--out", metavar="FILE",
+        help="Write JSON output to FILE instead of stdout",
+    )
 
     # ---- query-logs ---------------------------------------------------
     p_ql = sub.add_parser("query-logs", help="Query persisted game logs from the local DB")
@@ -272,6 +305,38 @@ def main(argv: list[str] | None = None) -> int:
                 "by_team": stats,
             }, indent=2))
             return 0
+
+    # ------------------------------------------------------------------
+    elif args.command == "gamestats":
+        if args.date:
+            ts_rows, gl_rows = pipeline.fetch_game_stats_for_date(
+                args.date, force=args.force
+            )
+        else:
+            ts_rows, gl_rows = pipeline.fetch_game_stats_for_season(force=args.force)
+        print(json.dumps({
+            "team_stat_rows":  ts_rows,
+            "goalie_log_rows": gl_rows,
+        }, indent=2))
+        return 0
+
+    # ------------------------------------------------------------------
+    elif args.command == "dataset":
+        rows = pipeline.point_dataset(
+            team_abbr=args.team.upper() if args.team else None
+        )
+        payload = json.dumps({
+            "count": len(rows),
+            "columns": list(rows[0].keys()) if rows else [],
+            "rows": rows,
+        }, indent=2)
+        if args.out:
+            import pathlib
+            pathlib.Path(args.out).write_text(payload)
+            print(f"Wrote {len(rows)} rows to {args.out}")
+        else:
+            print(payload)
+        return 0
 
     # ------------------------------------------------------------------
     elif args.command == "query-logs":

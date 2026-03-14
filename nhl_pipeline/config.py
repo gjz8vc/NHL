@@ -35,11 +35,12 @@ RATE_LIMIT_DELAY: float = 0.5     # seconds between requests
 # ---------------------------------------------------------------------------
 BASE_DIR = Path(os.getenv("NHL_DATA_DIR", Path(__file__).parent.parent / "data"))
 
-SCHEDULES_DIR = BASE_DIR / "schedules"
-ROSTERS_DIR   = BASE_DIR / "rosters"
-GAMELOGS_DIR  = BASE_DIR / "gamelogs"
-RAW_DIR       = BASE_DIR / "raw"
-DB_PATH       = BASE_DIR / "nhl_pipeline.db"
+SCHEDULES_DIR  = BASE_DIR / "schedules"
+ROSTERS_DIR    = BASE_DIR / "rosters"
+GAMELOGS_DIR   = BASE_DIR / "gamelogs"
+GAMESTATS_DIR  = BASE_DIR / "gamestats"
+RAW_DIR        = BASE_DIR / "raw"
+DB_PATH        = BASE_DIR / "nhl_pipeline.db"
 
 
 @dataclass
@@ -52,11 +53,12 @@ class PipelineConfig:
 
     teams: list[str] = field(default_factory=lambda: list(ALL_TEAM_ABBRS))
 
-    schedules_dir: Path = SCHEDULES_DIR
-    rosters_dir: Path   = ROSTERS_DIR
-    gamelogs_dir: Path  = GAMELOGS_DIR
-    raw_dir: Path       = RAW_DIR
-    db_path: Path       = DB_PATH
+    schedules_dir: Path  = SCHEDULES_DIR
+    rosters_dir: Path    = ROSTERS_DIR
+    gamelogs_dir: Path   = GAMELOGS_DIR
+    gamestats_dir: Path  = GAMESTATS_DIR
+    raw_dir: Path        = RAW_DIR
+    db_path: Path        = DB_PATH
 
     timeout: int        = DEFAULT_TIMEOUT_SECONDS
     max_retries: int    = MAX_RETRIES
@@ -69,5 +71,6 @@ class PipelineConfig:
     use_cache: bool = True
 
     def ensure_dirs(self) -> None:
-        for d in (self.schedules_dir, self.rosters_dir, self.gamelogs_dir, self.raw_dir):
+        for d in (self.schedules_dir, self.rosters_dir, self.gamelogs_dir,
+                  self.gamestats_dir, self.raw_dir):
             d.mkdir(parents=True, exist_ok=True)

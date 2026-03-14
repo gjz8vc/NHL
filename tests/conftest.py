@@ -138,6 +138,7 @@ def tmp_config(tmp_path: Path) -> PipelineConfig:
         schedules_dir=tmp_path / "schedules",
         rosters_dir=tmp_path / "rosters",
         gamelogs_dir=tmp_path / "gamelogs",
+        gamestats_dir=tmp_path / "gamestats",
         raw_dir=tmp_path / "raw",
         db_path=tmp_path / "test.db",
         use_cache=True,

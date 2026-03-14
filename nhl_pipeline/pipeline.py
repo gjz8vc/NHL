@@ -10,6 +10,7 @@ from nhlpy import NHLClient
 
 from nhl_pipeline.config import PipelineConfig
 from nhl_pipeline.fetchers.game_log_fetcher import GameLogFetcher, REGULAR_SEASON, PLAYOFFS
+from nhl_pipeline.fetchers.game_stats_fetcher import GameStatsFetcher
 from nhl_pipeline.fetchers.roster_fetcher import RosterFetcher
 from nhl_pipeline.fetchers.schedule_fetcher import ScheduleFetcher
 from nhl_pipeline.models import DailySchedule, PlayerGameLog, PipelineRun, TeamRoster
@@ -52,10 +53,11 @@ class NHLPipeline:
         self.config.ensure_dirs()
 
         _client = client or NHLClient(timeout=self.config.timeout)
-        self._schedule_fetcher = ScheduleFetcher(self.config, client=_client)
-        self._roster_fetcher   = RosterFetcher(self.config, client=_client)
-        self._game_log_fetcher = GameLogFetcher(self.config, client=_client)
-        self._db               = Database(self.config.db_path)
+        self._schedule_fetcher   = ScheduleFetcher(self.config, client=_client)
+        self._roster_fetcher     = RosterFetcher(self.config, client=_client)
+        self._game_log_fetcher   = GameLogFetcher(self.config, client=_client)
+        self._game_stats_fetcher = GameStatsFetcher(self.config, client=_client)
+        self._db                 = Database(self.config.db_path)
 
     # ------------------------------------------------------------------
     # High-level orchestration
@@ -262,6 +264,76 @@ class NHLPipeline:
         self._db.upsert_game_logs(season_log.entries)
         return season_log.entries
 
+    def fetch_game_stats(
+        self,
+        game_id: int,
+        season: str,
+        game_type: int,
+        game_date: str,
+        home_abbr: str,
+        away_abbr: str,
+        home_goals: Optional[int] = None,
+        away_goals: Optional[int] = None,
+        *,
+        force: bool = False,
+    ) -> tuple[list, list]:
+        """Fetch + persist team stats and goalie logs for a single completed game.
+
+        Returns ``(team_stats_list, goalie_logs_list)``.
+        """
+        team_stats, goalie_logs = self._game_stats_fetcher.fetch_game(
+            game_id=game_id, season=season, game_type=game_type,
+            game_date=game_date, home_abbr=home_abbr, away_abbr=away_abbr,
+            home_goals=home_goals, away_goals=away_goals, force=force,
+        )
+        self._db.upsert_team_game_stats(team_stats)
+        self._db.upsert_goalie_game_logs(goalie_logs)
+        return team_stats, goalie_logs
+
+    def fetch_game_stats_for_date(
+        self, date: str, *, force: bool = False
+    ) -> tuple[int, int]:
+        """Fetch + persist team stats and goalie logs for all FINAL games on *date*.
+
+        Returns ``(team_stat_rows, goalie_log_rows)`` inserted.
+        """
+        games = self._db.get_games_for_date(date)
+        ts_list, gl_list = self._game_stats_fetcher.fetch_games(games, force=force)
+        ts_rows = self._db.upsert_team_game_stats(ts_list)
+        gl_rows = self._db.upsert_goalie_game_logs(gl_list)
+        return ts_rows, gl_rows
+
+    def fetch_game_stats_for_season(
+        self,
+        season: Optional[str] = None,
+        game_type: int = REGULAR_SEASON,
+        *,
+        force: bool = False,
+    ) -> tuple[int, int]:
+        """Fetch + persist team stats and goalie logs for every FINAL game in *season*.
+
+        Returns ``(team_stat_rows, goalie_log_rows)`` inserted.
+        """
+        season = season or self.config.season
+        with self._db._conn() as con:
+            rows = con.execute(
+                "SELECT * FROM games WHERE season = ? AND game_type = ?"
+                " AND game_state = 'FINAL' ORDER BY date",
+                (season, game_type),
+            ).fetchall()
+        game_records = [dict(r) for r in rows]
+
+        ts_list, gl_list = self._game_stats_fetcher.fetch_games(
+            game_records, force=force
+        )
+        ts_rows = self._db.upsert_team_game_stats(ts_list)
+        gl_rows = self._db.upsert_goalie_game_logs(gl_list)
+        log.info(
+            "Season game stats complete — %d team-stat rows, %d goalie-log rows",
+            ts_rows, gl_rows,
+        )
+        return ts_rows, gl_rows
+
     # ------------------------------------------------------------------
     # Query helpers
     # ------------------------------------------------------------------
@@ -302,6 +374,48 @@ class NHLPipeline:
             team_abbr,
             season=season or self.config.season,
             game_type=game_type,
+        )
+
+    def team_game_stats(
+        self, team_abbr: str, season: Optional[str] = None
+    ) -> list[dict]:
+        """Return persisted team-game-stats rows for *team_abbr*."""
+        return self._db.get_team_game_stats(team_abbr, season or self.config.season)
+
+    def goalie_logs(
+        self,
+        player_id: int,
+        season: Optional[str] = None,
+        starters_only: bool = True,
+    ) -> list[dict]:
+        """Return persisted goalie game logs."""
+        return self._db.get_goalie_game_logs(
+            player_id, season or self.config.season, starters_only=starters_only
+        )
+
+    def goalie_rolling_stats(self, player_id: int) -> list[dict]:
+        """Return rolling save% / GAA for a goalie (last-5-start windows)."""
+        return self._db.get_goalie_rolling_stats(player_id)
+
+    def point_dataset(
+        self,
+        season: Optional[str] = None,
+        game_type: int = REGULAR_SEASON,
+        team_abbr: Optional[str] = None,
+    ) -> list[dict]:
+        """Return the ``player_point_dataset`` view — the modelling-ready table.
+
+        Each row is one skater in one game with:
+        - player bio and game stats
+        - their team's goals / shots / PP% / PK%
+        - opponent team's same stats
+        - opposing starting goalie save% (current game and rolling last-5)
+        - binary target ``point_scored`` (1 if goals+assists >= 1)
+        """
+        return self._db.get_point_dataset(
+            season=season or self.config.season,
+            game_type=game_type,
+            team_abbr=team_abbr,
         )
 
     def run_history(self, limit: int = 20) -> list[dict]:

@@ -1,4 +1,4 @@
-"""SQLite storage layer — optional persistent store for schedules and rosters."""
+"""SQLite storage layer — schedules, rosters, game logs, team stats, and views."""
 
 from __future__ import annotations
 
@@ -8,16 +8,24 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Generator, Optional
 
-from nhl_pipeline.models import DailySchedule, Game, Player, PlayerGameLog, TeamRoster
+from nhl_pipeline.models import (
+    DailySchedule,
+    Game,
+    GoalieGameLog,
+    Player,
+    PlayerGameLog,
+    TeamGameStats,
+    TeamRoster,
+)
 from nhl_pipeline.utils import get_logger
 
 log = get_logger(__name__)
 
 # ---------------------------------------------------------------------------
-# Schema
+# Schema — tables
 # ---------------------------------------------------------------------------
 
-_DDL = """
+_DDL_TABLES = """
 PRAGMA journal_mode=WAL;
 
 CREATE TABLE IF NOT EXISTS games (
@@ -105,17 +113,216 @@ CREATE INDEX IF NOT EXISTS idx_gamelogs_game   ON player_game_logs(game_id);
 CREATE INDEX IF NOT EXISTS idx_gamelogs_date   ON player_game_logs(game_date);
 CREATE INDEX IF NOT EXISTS idx_gamelogs_team   ON player_game_logs(team_abbr, season);
 
-CREATE TABLE IF NOT EXISTS pipeline_runs (
-    run_id       TEXT PRIMARY KEY,
-    started_at   TEXT NOT NULL,
-    finished_at  TEXT,
-    date_fetched TEXT,
-    schedules_ok INTEGER DEFAULT 0,
-    rosters_ok   INTEGER DEFAULT 0,
-    errors_json  TEXT,
-    warnings_json TEXT,
-    success      INTEGER DEFAULT 1
+CREATE TABLE IF NOT EXISTS team_game_stats (
+    game_id            INTEGER NOT NULL,
+    season             TEXT    NOT NULL,
+    game_date          TEXT,
+    team_abbr          TEXT    NOT NULL,
+    opponent_abbr      TEXT,
+    home_away          TEXT,
+    goals              INTEGER,
+    goals_allowed      INTEGER,
+    shots_for          INTEGER,
+    shots_against      INTEGER,
+    pp_goals           INTEGER,
+    pp_opportunities   INTEGER,
+    pp_pct             REAL,
+    pk_goals_allowed   INTEGER,
+    pk_opportunities   INTEGER,
+    pk_pct             REAL,
+    faceoff_win_pct    REAL,
+    hits               INTEGER,
+    blocked_shots      INTEGER,
+    pim                INTEGER,
+    giveaways          INTEGER,
+    takeaways          INTEGER,
+    fetched_at         TEXT,
+    PRIMARY KEY (game_id, team_abbr)
 );
+
+CREATE INDEX IF NOT EXISTS idx_tgs_team   ON team_game_stats(team_abbr, season);
+CREATE INDEX IF NOT EXISTS idx_tgs_date   ON team_game_stats(game_date);
+CREATE INDEX IF NOT EXISTS idx_tgs_game   ON team_game_stats(game_id);
+
+CREATE TABLE IF NOT EXISTS goalie_game_logs (
+    player_id      INTEGER NOT NULL,
+    game_id        INTEGER NOT NULL,
+    season         TEXT    NOT NULL,
+    game_type      INTEGER NOT NULL,
+    game_date      TEXT,
+    team_abbr      TEXT,
+    opponent_abbr  TEXT,
+    home_away      TEXT,
+    is_starter     INTEGER NOT NULL DEFAULT 0,
+    decision       TEXT,
+    goals_against  INTEGER,
+    shots_against  INTEGER,
+    saves          INTEGER,
+    save_pct       REAL,
+    toi            TEXT,
+    toi_seconds    INTEGER,
+    shutout        INTEGER,
+    fetched_at     TEXT,
+    PRIMARY KEY (player_id, game_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_goalielogs_player ON goalie_game_logs(player_id, season);
+CREATE INDEX IF NOT EXISTS idx_goalielogs_game   ON goalie_game_logs(game_id);
+CREATE INDEX IF NOT EXISTS idx_goalielogs_team   ON goalie_game_logs(team_abbr, season);
+CREATE INDEX IF NOT EXISTS idx_goalielogs_start  ON goalie_game_logs(game_id, team_abbr, is_starter);
+
+CREATE TABLE IF NOT EXISTS pipeline_runs (
+    run_id        TEXT PRIMARY KEY,
+    started_at    TEXT NOT NULL,
+    finished_at   TEXT,
+    date_fetched  TEXT,
+    schedules_ok  INTEGER DEFAULT 0,
+    rosters_ok    INTEGER DEFAULT 0,
+    errors_json   TEXT,
+    warnings_json TEXT,
+    success       INTEGER DEFAULT 1
+);
+"""
+
+# ---------------------------------------------------------------------------
+# Views
+# ---------------------------------------------------------------------------
+
+# goalie_rolling_stats: per-goalie rolling averages of the 5 games played
+# BEFORE the current game (using SQLite window functions, available since 3.25).
+_DDL_VIEWS = """
+CREATE VIEW IF NOT EXISTS goalie_rolling_stats AS
+SELECT
+    player_id,
+    game_id,
+    game_date,
+    team_abbr,
+    save_pct,
+    goals_against,
+    shots_against,
+    toi_seconds,
+    -- Rolling stats over (up to) 5 starts preceding this game
+    ROUND(AVG(save_pct) OVER (
+        PARTITION BY player_id
+        ORDER BY game_date
+        ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+    ), 4) AS recent_5g_save_pct,
+    ROUND(AVG(goals_against) OVER (
+        PARTITION BY player_id
+        ORDER BY game_date
+        ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+    ), 3) AS recent_5g_gaa,
+    COUNT(*) OVER (
+        PARTITION BY player_id
+        ORDER BY game_date
+        ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+    ) AS recent_5g_games_played
+FROM goalie_game_logs
+WHERE is_starter = 1;
+
+-- player_point_dataset: the modelling-ready table.
+-- Each row = one skater in one game.
+-- Includes team context, opposing-goalie context, and the binary target.
+CREATE VIEW IF NOT EXISTS player_point_dataset AS
+SELECT
+    -- ── Identity ──────────────────────────────────────────────────────────
+    pgl.player_id,
+    pgl.game_id,
+    pgl.season,
+    pgl.game_date,
+    pgl.team_abbr,
+    pgl.opponent_abbr,
+    pgl.home_away,
+    r.full_name       AS player_name,
+    r.position,
+    r.shoots_catches,
+
+    -- ── Skater game stats ─────────────────────────────────────────────────
+    pgl.goals,
+    pgl.assists,
+    pgl.points,
+    pgl.shots,
+    pgl.toi_seconds,
+    pgl.pim,
+    pgl.plus_minus,
+    pgl.shifts,
+    pgl.power_play_goals,
+    pgl.power_play_points,
+    pgl.game_winning_goals,
+
+    -- ── Player's team context ─────────────────────────────────────────────
+    tgs.goals              AS team_goals,
+    tgs.goals_allowed      AS team_goals_allowed,
+    tgs.shots_for          AS team_shots_for,
+    tgs.shots_against      AS team_shots_against,
+    tgs.pp_goals           AS team_pp_goals,
+    tgs.pp_opportunities   AS team_pp_opps,
+    tgs.pp_pct             AS team_pp_pct,
+    tgs.pk_pct             AS team_pk_pct,
+    tgs.faceoff_win_pct    AS team_faceoff_win_pct,
+
+    -- ── Opponent team context ─────────────────────────────────────────────
+    opp.goals              AS opp_goals,
+    opp.shots_for          AS opp_shots_for,
+    opp.pp_pct             AS opp_pp_pct,
+    opp.pk_pct             AS opp_pk_pct,
+    opp.faceoff_win_pct    AS opp_faceoff_win_pct,
+
+    -- ── Opposing starting goalie (this game) ─────────────────────────────
+    ggl.player_id          AS opp_goalie_id,
+    og_r.full_name         AS opp_goalie_name,
+    ggl.save_pct           AS opp_goalie_save_pct,
+    ggl.goals_against      AS opp_goalie_goals_against,
+    ggl.shots_against      AS opp_goalie_shots_against,
+    ggl.decision           AS opp_goalie_decision,
+
+    -- ── Opposing goalie recent form (last 5 starts before this game) ──────
+    grs.recent_5g_save_pct   AS opp_goalie_recent_5g_save_pct,
+    grs.recent_5g_gaa        AS opp_goalie_recent_5g_gaa,
+    grs.recent_5g_games_played AS opp_goalie_recent_5g_games,
+
+    -- ── Binary target ─────────────────────────────────────────────────────
+    CASE
+        WHEN (COALESCE(pgl.goals, 0) + COALESCE(pgl.assists, 0)) >= 1 THEN 1
+        ELSE 0
+    END AS point_scored
+
+FROM player_game_logs pgl
+
+-- Player bio from roster
+LEFT JOIN rosters r
+    ON  pgl.player_id = r.player_id
+    AND pgl.season    = r.season
+
+-- Player's own team game stats
+LEFT JOIN team_game_stats tgs
+    ON  pgl.game_id   = tgs.game_id
+    AND pgl.team_abbr = tgs.team_abbr
+
+-- Opponent team game stats
+LEFT JOIN team_game_stats opp
+    ON  pgl.game_id       = opp.game_id
+    AND pgl.opponent_abbr = opp.team_abbr
+
+-- Opposing starting goalie (for this game)
+LEFT JOIN goalie_game_logs ggl
+    ON  pgl.game_id       = ggl.game_id
+    AND pgl.opponent_abbr = ggl.team_abbr
+    AND ggl.is_starter    = 1
+
+-- Opposing goalie name
+LEFT JOIN rosters og_r
+    ON  ggl.player_id = og_r.player_id
+    AND ggl.season    = og_r.season
+
+-- Opposing goalie rolling form
+LEFT JOIN goalie_rolling_stats grs
+    ON  ggl.player_id = grs.player_id
+    AND ggl.game_id   = grs.game_id
+
+-- Exclude goalies from the dataset (skaters only)
+WHERE r.position != 'G'
+  AND r.position IS NOT NULL;
 """
 
 
@@ -128,7 +335,7 @@ class Database:
         self._init_schema()
 
     # ------------------------------------------------------------------
-    # Context manager / connection
+    # Connection
     # ------------------------------------------------------------------
 
     @contextmanager
@@ -146,7 +353,8 @@ class Database:
 
     def _init_schema(self) -> None:
         with self._conn() as con:
-            con.executescript(_DDL)
+            con.executescript(_DDL_TABLES)
+            con.executescript(_DDL_VIEWS)
         log.debug("Database schema initialised at %s", self.path)
 
     # ------------------------------------------------------------------
@@ -154,7 +362,6 @@ class Database:
     # ------------------------------------------------------------------
 
     def upsert_schedule(self, schedule: DailySchedule) -> int:
-        """Insert or replace all games in *schedule*. Returns number of rows affected."""
         rows = [_game_to_row(g) for g in schedule.games]
         if not rows:
             return 0
@@ -184,10 +391,7 @@ class Database:
         return [dict(r) for r in rows]
 
     def get_games_for_team(self, team_abbr: str, season: Optional[str] = None) -> list[dict]:
-        sql = """
-            SELECT * FROM games
-            WHERE (home_team_abbr = ? OR away_team_abbr = ?)
-        """
+        sql = "SELECT * FROM games WHERE (home_team_abbr = ? OR away_team_abbr = ?)"
         params: list = [team_abbr, team_abbr]
         if season:
             sql += " AND season = ?"
@@ -202,7 +406,6 @@ class Database:
     # ------------------------------------------------------------------
 
     def upsert_roster(self, roster: TeamRoster) -> int:
-        """Insert or replace all players in *roster*. Returns number of rows affected."""
         rows = [_player_to_row(p, roster.team_abbr, roster.season, roster.fetched_at)
                 for p in roster.all_players]
         if not rows:
@@ -230,7 +433,8 @@ class Database:
     def get_roster(self, team_abbr: str, season: str) -> list[dict]:
         with self._conn() as con:
             rows = con.execute(
-                "SELECT * FROM rosters WHERE team_abbr = ? AND season = ? ORDER BY position, last_name",
+                "SELECT * FROM rosters WHERE team_abbr = ? AND season = ?"
+                " ORDER BY position, last_name",
                 (team_abbr, season),
             ).fetchall()
         return [dict(r) for r in rows]
@@ -248,7 +452,6 @@ class Database:
     # ------------------------------------------------------------------
 
     def upsert_game_logs(self, logs: list[PlayerGameLog]) -> int:
-        """Insert or replace game-log rows. Returns number of rows affected."""
         if not logs:
             return 0
         rows = [_game_log_to_row(gl) for gl in logs]
@@ -286,7 +489,6 @@ class Database:
         season: Optional[str] = None,
         game_type: Optional[int] = None,
     ) -> list[dict]:
-        """Return game logs for a player, optionally filtered by season/type."""
         sql = "SELECT * FROM player_game_logs WHERE player_id = ?"
         params: list = [player_id]
         if season:
@@ -301,36 +503,176 @@ class Database:
         return [dict(r) for r in rows]
 
     def get_team_game_logs(
-        self,
-        team_abbr: str,
-        season: str,
-        game_type: int = 2,
+        self, team_abbr: str, season: str, game_type: int = 2
     ) -> list[dict]:
-        """Return all player-game rows for a team in a season (great for
-        building a team-level per-game dataset)."""
-        sql = """
-            SELECT * FROM player_game_logs
-            WHERE team_abbr = ? AND season = ? AND game_type = ?
-            ORDER BY game_date, player_id
-        """
         with self._conn() as con:
-            rows = con.execute(sql, (team_abbr, season, game_type)).fetchall()
+            rows = con.execute(
+                "SELECT * FROM player_game_logs"
+                " WHERE team_abbr = ? AND season = ? AND game_type = ?"
+                " ORDER BY game_date, player_id",
+                (team_abbr, season, game_type),
+            ).fetchall()
         return [dict(r) for r in rows]
 
     def get_game_logs_for_date(self, game_date: str) -> list[dict]:
-        """Return all player-game rows for a specific game date."""
         with self._conn() as con:
             rows = con.execute(
-                "SELECT * FROM player_game_logs WHERE game_date = ? ORDER BY team_abbr, player_id",
+                "SELECT * FROM player_game_logs"
+                " WHERE game_date = ? ORDER BY team_abbr, player_id",
                 (game_date,),
             ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Team game stats
+    # ------------------------------------------------------------------
+
+    def upsert_team_game_stats(self, stats: list[TeamGameStats]) -> int:
+        if not stats:
+            return 0
+        rows = [_team_stats_to_row(s) for s in stats]
+        sql = """
+            INSERT OR REPLACE INTO team_game_stats
+              (game_id, season, game_date, team_abbr, opponent_abbr, home_away,
+               goals, goals_allowed, shots_for, shots_against,
+               pp_goals, pp_opportunities, pp_pct,
+               pk_goals_allowed, pk_opportunities, pk_pct,
+               faceoff_win_pct, hits, blocked_shots, pim,
+               giveaways, takeaways, fetched_at)
+            VALUES
+              (:game_id,:season,:game_date,:team_abbr,:opponent_abbr,:home_away,
+               :goals,:goals_allowed,:shots_for,:shots_against,
+               :pp_goals,:pp_opportunities,:pp_pct,
+               :pk_goals_allowed,:pk_opportunities,:pk_pct,
+               :faceoff_win_pct,:hits,:blocked_shots,:pim,
+               :giveaways,:takeaways,:fetched_at)
+        """
+        with self._conn() as con:
+            con.executemany(sql, rows)
+        return len(rows)
+
+    def get_team_game_stats(
+        self,
+        team_abbr: str,
+        season: Optional[str] = None,
+    ) -> list[dict]:
+        sql = "SELECT * FROM team_game_stats WHERE team_abbr = ?"
+        params: list = [team_abbr]
+        if season:
+            sql += " AND season = ?"
+            params.append(season)
+        sql += " ORDER BY game_date"
+        with self._conn() as con:
+            rows = con.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_game_team_stats(self, game_id: int) -> list[dict]:
+        """Return both team rows for a single game."""
+        with self._conn() as con:
+            rows = con.execute(
+                "SELECT * FROM team_game_stats WHERE game_id = ?", (game_id,)
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Goalie game logs
+    # ------------------------------------------------------------------
+
+    def upsert_goalie_game_logs(self, logs: list[GoalieGameLog]) -> int:
+        if not logs:
+            return 0
+        rows = [_goalie_log_to_row(g) for g in logs]
+        sql = """
+            INSERT OR REPLACE INTO goalie_game_logs
+              (player_id, game_id, season, game_type, game_date,
+               team_abbr, opponent_abbr, home_away,
+               is_starter, decision,
+               goals_against, shots_against, saves, save_pct,
+               toi, toi_seconds, shutout, fetched_at)
+            VALUES
+              (:player_id,:game_id,:season,:game_type,:game_date,
+               :team_abbr,:opponent_abbr,:home_away,
+               :is_starter,:decision,
+               :goals_against,:shots_against,:saves,:save_pct,
+               :toi,:toi_seconds,:shutout,:fetched_at)
+        """
+        with self._conn() as con:
+            con.executemany(sql, rows)
+        return len(rows)
+
+    def get_goalie_game_logs(
+        self,
+        player_id: int,
+        season: Optional[str] = None,
+        starters_only: bool = False,
+    ) -> list[dict]:
+        sql = "SELECT * FROM goalie_game_logs WHERE player_id = ?"
+        params: list = [player_id]
+        if season:
+            sql += " AND season = ?"
+            params.append(season)
+        if starters_only:
+            sql += " AND is_starter = 1"
+        sql += " ORDER BY game_date"
+        with self._conn() as con:
+            rows = con.execute(sql, params).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_goalie_rolling_stats(self, player_id: int) -> list[dict]:
+        """Return pre-computed rolling save% and GAA for a goalie (from the view)."""
+        with self._conn() as con:
+            rows = con.execute(
+                "SELECT * FROM goalie_rolling_stats WHERE player_id = ?"
+                " ORDER BY game_date",
+                (player_id,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
+    # Modelling dataset
+    # ------------------------------------------------------------------
+
+    def get_point_dataset(
+        self,
+        season: Optional[str] = None,
+        game_type: int = 2,
+        team_abbr: Optional[str] = None,
+    ) -> list[dict]:
+        """Query the ``player_point_dataset`` view.
+
+        Each row is one skater in one game with team/goalie context and the
+        binary ``point_scored`` target.
+        """
+        sql = (
+            "SELECT * FROM player_point_dataset"
+            " WHERE pgl_game_type = ?"
+        )
+        # The view aliases game_type as pgl.game_type — SQLite passes it through
+        # unaliased; fall back to a subquery approach for filtering.
+        sql = """
+            SELECT ppd.*
+            FROM player_point_dataset ppd
+            JOIN player_game_logs pgl
+              ON ppd.player_id = pgl.player_id AND ppd.game_id = pgl.game_id
+            WHERE pgl.game_type = ?
+        """
+        params: list = [game_type]
+        if season:
+            sql += " AND pgl.season = ?"
+            params.append(season)
+        if team_abbr:
+            sql += " AND ppd.team_abbr = ?"
+            params.append(team_abbr)
+        sql += " ORDER BY ppd.game_date, ppd.player_id"
+        with self._conn() as con:
+            rows = con.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
     # Pipeline runs
     # ------------------------------------------------------------------
 
-    def save_run(self, run) -> None:  # run: PipelineRun
+    def save_run(self, run) -> None:
         sql = """
             INSERT OR REPLACE INTO pipeline_runs
               (run_id, started_at, finished_at, date_fetched,
@@ -339,14 +681,9 @@ class Database:
         """
         with self._conn() as con:
             con.execute(sql, (
-                run.run_id,
-                run.started_at,
-                run.finished_at,
-                run.date_fetched,
-                run.schedules_ok,
-                run.rosters_ok,
-                json.dumps(run.errors),
-                json.dumps(run.warnings),
+                run.run_id, run.started_at, run.finished_at, run.date_fetched,
+                run.schedules_ok, run.rosters_ok,
+                json.dumps(run.errors), json.dumps(run.warnings),
                 int(run.success),
             ))
 
@@ -365,74 +702,80 @@ class Database:
 
 def _game_to_row(g: Game) -> dict:
     return {
-        "game_id":         g.game_id,
-        "season":          g.season,
-        "game_type":       g.game_type,
-        "game_type_label": g.game_type_label,
-        "date":            g.date,
-        "start_time_utc":  g.start_time_utc,
-        "venue":           g.venue,
-        "home_team_id":    g.home_team.id,
-        "home_team_abbr":  g.home_team.abbr,
-        "home_team_name":  g.home_team.name,
-        "home_score":      g.home_team.score,
-        "away_team_id":    g.away_team.id,
-        "away_team_abbr":  g.away_team.abbr,
-        "away_team_name":  g.away_team.name,
-        "away_score":      g.away_team.score,
-        "game_state":      g.game_state,
-        "period":          g.period,
-        "fetched_at":      g.fetched_at,
+        "game_id": g.game_id, "season": g.season,
+        "game_type": g.game_type, "game_type_label": g.game_type_label,
+        "date": g.date, "start_time_utc": g.start_time_utc, "venue": g.venue,
+        "home_team_id": g.home_team.id, "home_team_abbr": g.home_team.abbr,
+        "home_team_name": g.home_team.name, "home_score": g.home_team.score,
+        "away_team_id": g.away_team.id, "away_team_abbr": g.away_team.abbr,
+        "away_team_name": g.away_team.name, "away_score": g.away_team.score,
+        "game_state": g.game_state, "period": g.period, "fetched_at": g.fetched_at,
     }
 
 
 def _game_log_to_row(gl: PlayerGameLog) -> dict:
     return {
-        "player_id":              gl.player_id,
-        "game_id":                gl.game_id,
-        "season":                 gl.season,
-        "game_type":              gl.game_type,
-        "game_date":              gl.game_date,
-        "team_abbr":              gl.team_abbr,
-        "opponent_abbr":          gl.opponent_abbr,
-        "home_away":              gl.home_away,
-        "goals":                  gl.goals,
-        "assists":                gl.assists,
-        "points":                 gl.points,
-        "plus_minus":             gl.plus_minus,
-        "shots":                  gl.shots,
-        "pim":                    gl.pim,
-        "shifts":                 gl.shifts,
-        "toi":                    gl.toi,
-        "toi_seconds":            gl.toi_seconds,
-        "power_play_goals":       gl.power_play_goals,
-        "power_play_points":      gl.power_play_points,
-        "power_play_toi":         gl.power_play_toi,
+        "player_id": gl.player_id, "game_id": gl.game_id,
+        "season": gl.season, "game_type": gl.game_type,
+        "game_date": gl.game_date, "team_abbr": gl.team_abbr,
+        "opponent_abbr": gl.opponent_abbr, "home_away": gl.home_away,
+        "goals": gl.goals, "assists": gl.assists, "points": gl.points,
+        "plus_minus": gl.plus_minus, "shots": gl.shots, "pim": gl.pim,
+        "shifts": gl.shifts, "toi": gl.toi, "toi_seconds": gl.toi_seconds,
+        "power_play_goals": gl.power_play_goals,
+        "power_play_points": gl.power_play_points,
+        "power_play_toi": gl.power_play_toi,
         "power_play_toi_seconds": gl.power_play_toi_seconds,
-        "game_winning_goals":     gl.game_winning_goals,
-        "ot_goals":               gl.ot_goals,
-        "shorthanded_goals":      gl.shorthanded_goals,
-        "shorthanded_points":     gl.shorthanded_points,
-        "fetched_at":             gl.fetched_at,
+        "game_winning_goals": gl.game_winning_goals,
+        "ot_goals": gl.ot_goals,
+        "shorthanded_goals": gl.shorthanded_goals,
+        "shorthanded_points": gl.shorthanded_points,
+        "fetched_at": gl.fetched_at,
+    }
+
+
+def _team_stats_to_row(s: TeamGameStats) -> dict:
+    return {
+        "game_id": s.game_id, "season": s.season, "game_date": s.game_date,
+        "team_abbr": s.team_abbr, "opponent_abbr": s.opponent_abbr,
+        "home_away": s.home_away,
+        "goals": s.goals, "goals_allowed": s.goals_allowed,
+        "shots_for": s.shots_for, "shots_against": s.shots_against,
+        "pp_goals": s.pp_goals, "pp_opportunities": s.pp_opportunities,
+        "pp_pct": s.pp_pct,
+        "pk_goals_allowed": s.pk_goals_allowed,
+        "pk_opportunities": s.pk_opportunities, "pk_pct": s.pk_pct,
+        "faceoff_win_pct": s.faceoff_win_pct,
+        "hits": s.hits, "blocked_shots": s.blocked_shots,
+        "pim": s.pim, "giveaways": s.giveaways, "takeaways": s.takeaways,
+        "fetched_at": s.fetched_at,
+    }
+
+
+def _goalie_log_to_row(g: GoalieGameLog) -> dict:
+    return {
+        "player_id": g.player_id, "game_id": g.game_id,
+        "season": g.season, "game_type": g.game_type,
+        "game_date": g.game_date, "team_abbr": g.team_abbr,
+        "opponent_abbr": g.opponent_abbr, "home_away": g.home_away,
+        "is_starter": int(g.is_starter),
+        "decision": g.decision,
+        "goals_against": g.goals_against, "shots_against": g.shots_against,
+        "saves": g.saves, "save_pct": g.save_pct,
+        "toi": g.toi, "toi_seconds": g.toi_seconds,
+        "shutout": int(g.shutout) if g.shutout is not None else None,
+        "fetched_at": g.fetched_at,
     }
 
 
 def _player_to_row(p: Player, team_abbr: str, season: str, fetched_at: str) -> dict:
     return {
-        "player_id":      p.player_id,
-        "team_abbr":      team_abbr,
-        "season":         season,
-        "first_name":     p.first_name,
-        "last_name":      p.last_name,
-        "full_name":      p.full_name,
-        "jersey_number":  p.jersey_number,
-        "position":       p.position,
-        "shoots_catches": p.shoots_catches,
-        "height_inches":  p.height_inches,
-        "weight_lbs":     p.weight_lbs,
-        "birth_date":     p.birth_date,
-        "birth_city":     p.birth_city,
-        "birth_country":  p.birth_country,
-        "headshot_url":   p.headshot_url,
-        "fetched_at":     fetched_at,
+        "player_id": p.player_id, "team_abbr": team_abbr, "season": season,
+        "first_name": p.first_name, "last_name": p.last_name,
+        "full_name": p.full_name, "jersey_number": p.jersey_number,
+        "position": p.position, "shoots_catches": p.shoots_catches,
+        "height_inches": p.height_inches, "weight_lbs": p.weight_lbs,
+        "birth_date": p.birth_date, "birth_city": p.birth_city,
+        "birth_country": p.birth_country, "headshot_url": p.headshot_url,
+        "fetched_at": fetched_at,
     }

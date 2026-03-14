@@ -302,6 +302,247 @@ class PlayerSeasonGameLog:
 
 
 # ---------------------------------------------------------------------------
+# Team game stats (one row per team per game)
+# ---------------------------------------------------------------------------
+
+def _parse_pp(raw_value: Optional[str]) -> tuple[Optional[int], Optional[int], Optional[float]]:
+    """Parse a power-play string like ``'2/4'`` into (goals, opportunities, pct).
+
+    Returns ``(None, None, None)`` if the value is missing or unparseable.
+    """
+    if not raw_value or not isinstance(raw_value, str) or "/" not in raw_value:
+        return None, None, None
+    try:
+        goals_str, opps_str = raw_value.split("/")
+        goals = int(goals_str)
+        opps  = int(opps_str)
+        pct   = round(goals / opps, 4) if opps > 0 else 0.0
+        return goals, opps, pct
+    except (ValueError, ZeroDivisionError):
+        return None, None, None
+
+
+@dataclass
+class TeamGameStats:
+    """Per-team statistics for a single game.
+
+    Populated from:
+    - **right-rail** (``gamecenter/{id}/right-rail``): SOG, faceoff%,
+      power-play string (``"goals/opportunities"``), PK%, hits, blocked shots,
+      PIM, giveaways, takeaways.
+    - **games table** (already stored in DB): goals / goals_allowed.
+
+    Two rows are produced per game — one for each team.
+    """
+
+    game_id: int
+    season: str
+    game_date: str
+    team_abbr: str
+    opponent_abbr: str
+    home_away: str          # "home" | "away"
+
+    # Scoring
+    goals: Optional[int] = None
+    goals_allowed: Optional[int] = None
+
+    # Shot volume
+    shots_for: Optional[int] = None
+    shots_against: Optional[int] = None
+
+    # Power play
+    pp_goals: Optional[int] = None
+    pp_opportunities: Optional[int] = None
+    pp_pct: Optional[float] = None   # derived: pp_goals / pp_opportunities
+
+    # Penalty kill (mirrored from opponent PP)
+    pk_goals_allowed: Optional[int] = None   # = opponent pp_goals
+    pk_opportunities: Optional[int] = None   # = opponent pp_opportunities
+    pk_pct: Optional[float] = None           # from API
+
+    # Advanced context
+    faceoff_win_pct: Optional[float] = None
+    hits: Optional[int] = None
+    blocked_shots: Optional[int] = None
+    pim: Optional[int] = None
+    giveaways: Optional[int] = None
+    takeaways: Optional[int] = None
+
+    fetched_at: str = field(default_factory=_now_iso)
+
+    @classmethod
+    def pair_from_right_rail(
+        cls,
+        raw: dict,
+        game_id: int,
+        season: str,
+        game_date: str,
+        home_abbr: str,
+        away_abbr: str,
+        home_goals: Optional[int] = None,
+        away_goals: Optional[int] = None,
+    ) -> tuple["TeamGameStats", "TeamGameStats"]:
+        """Build two ``TeamGameStats`` rows (home + away) from a right-rail payload.
+
+        Args:
+            raw:        Parsed JSON of the right-rail response.
+            game_id:    NHL game ID.
+            season:     Season string (e.g. ``"20252026"``).
+            game_date:  Date string (``YYYY-MM-DD``).
+            home_abbr:  Home team abbreviation.
+            away_abbr:  Away team abbreviation.
+            home_goals: Final score for home team (from games table).
+            away_goals: Final score for away team (from games table).
+        """
+        # Flatten teamGameStats array → {category: (away_val, home_val)}
+        stat: dict[str, tuple] = {}
+        for item in raw.get("teamGameStats", []):
+            cat = item.get("category", "")
+            stat[cat] = (item.get("awayValue"), item.get("homeValue"))
+
+        def _float(val) -> Optional[float]:
+            try:
+                return float(val) if val is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        def _int(val) -> Optional[int]:
+            try:
+                return int(val) if val is not None else None
+            except (TypeError, ValueError):
+                return None
+
+        sog_away,   sog_home   = stat.get("sog",                 (None, None))
+        fow_away,   fow_home   = stat.get("faceoffWinningPctg",  (None, None))
+        pp_away_s,  pp_home_s  = stat.get("powerPlay",           (None, None))
+        pk_away,    pk_home    = stat.get("penaltyKillPctg",      (None, None))
+        hits_away,  hits_home  = stat.get("hits",                (None, None))
+        blk_away,   blk_home   = stat.get("blockedShots",        (None, None))
+        pim_away,   pim_home   = stat.get("pim",                 (None, None))
+        give_away,  give_home  = stat.get("giveaways",           (None, None))
+        take_away,  take_home  = stat.get("takeaways",           (None, None))
+
+        pp_away_g, pp_away_o, pp_away_p = _parse_pp(pp_away_s)
+        pp_home_g, pp_home_o, pp_home_p = _parse_pp(pp_home_s)
+
+        home = cls(
+            game_id=game_id, season=season, game_date=game_date,
+            team_abbr=home_abbr, opponent_abbr=away_abbr, home_away="home",
+            goals=home_goals, goals_allowed=away_goals,
+            shots_for=_int(sog_home), shots_against=_int(sog_away),
+            pp_goals=pp_home_g, pp_opportunities=pp_home_o, pp_pct=pp_home_p,
+            pk_goals_allowed=pp_away_g, pk_opportunities=pp_away_o,
+            pk_pct=_float(pk_home),
+            faceoff_win_pct=_float(fow_home),
+            hits=_int(hits_home), blocked_shots=_int(blk_home),
+            pim=_int(pim_home), giveaways=_int(give_home), takeaways=_int(take_home),
+        )
+        away = cls(
+            game_id=game_id, season=season, game_date=game_date,
+            team_abbr=away_abbr, opponent_abbr=home_abbr, home_away="away",
+            goals=away_goals, goals_allowed=home_goals,
+            shots_for=_int(sog_away), shots_against=_int(sog_home),
+            pp_goals=pp_away_g, pp_opportunities=pp_away_o, pp_pct=pp_away_p,
+            pk_goals_allowed=pp_home_g, pk_opportunities=pp_home_o,
+            pk_pct=_float(pk_away),
+            faceoff_win_pct=_float(fow_away),
+            hits=_int(hits_away), blocked_shots=_int(blk_away),
+            pim=_int(pim_away), giveaways=_int(give_away), takeaways=_int(take_away),
+        )
+        return home, away
+
+
+# ---------------------------------------------------------------------------
+# Goalie game log (one row per goalie per game)
+# ---------------------------------------------------------------------------
+
+@dataclass
+class GoalieGameLog:
+    """Per-goalie statistics for a single game, parsed from the boxscore.
+
+    ``is_starter`` is ``True`` for the goalie with the most TOI in the game
+    (typically the starter), which is the relevant record for modelling
+    opposing-goalie difficulty.
+    """
+
+    player_id: int
+    game_id: int
+    season: str
+    game_type: int
+    game_date: str
+    team_abbr: str
+    opponent_abbr: str
+    home_away: str          # "home" | "away"
+
+    is_starter: bool        # True for the goalie with most TOI
+
+    decision: Optional[str] = None      # "W", "L", "O", or None
+    goals_against: Optional[int] = None
+    shots_against: Optional[int] = None
+    saves: Optional[int] = None
+    save_pct: Optional[float] = None
+    toi: Optional[str] = None
+    toi_seconds: Optional[int] = None
+    shutout: Optional[bool] = None
+
+    fetched_at: str = field(default_factory=_now_iso)
+
+    @classmethod
+    def list_from_boxscore_team(
+        cls,
+        goalies_raw: list[dict],
+        team_abbr: str,
+        opponent_abbr: str,
+        home_away: str,
+        game_id: int,
+        season: str,
+        game_type: int,
+        game_date: str,
+    ) -> list["GoalieGameLog"]:
+        """Parse all goalies for one team side from a boxscore response.
+
+        The goalie with the highest TOI is flagged as ``is_starter=True``.
+        """
+        if not goalies_raw:
+            return []
+
+        # Determine starter by max TOI
+        max_toi = max(
+            (_toi_to_seconds(g.get("toi")) or 0) for g in goalies_raw
+        )
+
+        logs = []
+        for raw in goalies_raw:
+            toi_str = raw.get("toi")
+            toi_sec = _toi_to_seconds(toi_str)
+            shots   = raw.get("shotsAgainst", 0) or 0
+            ga      = raw.get("goalsAgainst", 0) or 0
+            sv      = shots - ga
+            sv_pct  = round(sv / shots, 4) if shots > 0 else None
+
+            logs.append(cls(
+                player_id=raw.get("playerId", 0),
+                game_id=game_id,
+                season=season,
+                game_type=game_type,
+                game_date=game_date,
+                team_abbr=team_abbr,
+                opponent_abbr=opponent_abbr,
+                home_away=home_away,
+                is_starter=(toi_sec == max_toi and max_toi > 0),
+                decision=raw.get("decision"),
+                goals_against=ga,
+                shots_against=shots,
+                saves=sv,
+                save_pct=sv_pct,
+                toi=toi_str,
+                toi_seconds=toi_sec,
+                shutout=(ga == 0 and shots > 0),
+            ))
+        return logs
+
+
+# ---------------------------------------------------------------------------
 # Pipeline run summary
 # ---------------------------------------------------------------------------
 
