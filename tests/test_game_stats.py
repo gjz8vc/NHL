@@ -611,3 +611,107 @@ class TestPointDatasetView:
         rows = db.get_point_dataset(season="20252026")
         positions = {r["position"] for r in rows if r["position"]}
         assert "G" not in positions
+
+    def test_rolling_columns_present(self, db):
+        """player_point_dataset should include rolling player form columns."""
+        rows = db.get_point_dataset(season="20252026")
+        assert len(rows) >= 1
+        row = rows[0]
+        for col in ("player_points_last5", "player_points_last10",
+                    "player_shots_last5", "player_TOI_last5",
+                    "player_last5_games_played", "player_last10_games_played"):
+            assert col in row, f"Missing column: {col}"
+
+    def test_rolling_null_for_first_game(self, db):
+        """Rolling stats are NULL for a player's very first game."""
+        rows = db.get_point_dataset(season="20252026")
+        matthews = next(r for r in rows if r["player_id"] == 8478402)
+        # Only one game log inserted for Matthews → no preceding games
+        assert matthews["player_points_last5"] is None
+        assert matthews["player_last5_games_played"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Player rolling stats view
+# ---------------------------------------------------------------------------
+
+def _make_player_log(player_id, game_id, game_date, goals, assists, shots,
+                     toi_sec=1200, team="TOR", opp="BOS"):
+    return PlayerGameLog(
+        player_id=player_id, game_id=game_id, season="20252026", game_type=2,
+        game_date=game_date, team_abbr=team, opponent_abbr=opp, home_away="home",
+        goals=goals, assists=assists, points=goals + assists,
+        plus_minus=0, shots=shots, pim=0, shifts=20,
+        toi=None, toi_seconds=toi_sec,
+    )
+
+
+class TestPlayerRollingStatsView:
+    @pytest.fixture
+    def db_with_logs(self, tmp_config):
+        db = Database(tmp_config.db_path)
+        logs = [
+            _make_player_log(999, 200, "2026-01-01", 1, 1, 4, toi_sec=1200),
+            _make_player_log(999, 201, "2026-01-03", 0, 1, 3, toi_sec=1100),
+            _make_player_log(999, 202, "2026-01-05", 2, 0, 6, toi_sec=1300),
+            _make_player_log(999, 203, "2026-01-07", 0, 0, 2, toi_sec=900),
+            _make_player_log(999, 204, "2026-01-09", 1, 2, 5, toi_sec=1400),
+            _make_player_log(999, 205, "2026-01-11", 0, 1, 4, toi_sec=1250),
+            _make_player_log(999, 206, "2026-01-13", 1, 0, 3, toi_sec=1150),
+        ]
+        db.upsert_game_logs(logs)
+        return db
+
+    def test_view_returns_all_rows(self, db_with_logs):
+        rows = db_with_logs.get_player_rolling_stats(999)
+        assert len(rows) == 7
+
+    def test_first_game_no_rolling(self, db_with_logs):
+        rows = db_with_logs.get_player_rolling_stats(999)
+        first = next(r for r in rows if r["game_date"] == "2026-01-01")
+        assert first["player_points_last5"] is None
+        assert first["player_shots_last5"] is None
+        assert first["player_TOI_last5"] is None
+        assert first["player_last5_games_played"] == 0
+
+    def test_partial_window_second_game(self, db_with_logs):
+        rows = db_with_logs.get_player_rolling_stats(999)
+        second = next(r for r in rows if r["game_date"] == "2026-01-03")
+        # Only 1 preceding game
+        assert second["player_last5_games_played"] == 1
+        assert second["player_points_last5"] == pytest.approx(2.0, abs=0.01)
+        assert second["player_shots_last5"] == pytest.approx(4.0, abs=0.01)
+
+    def test_full_window_sixth_game(self, db_with_logs):
+        rows = db_with_logs.get_player_rolling_stats(999)
+        # 6th game (Jan 11) has 5 preceding games → full 5-game window
+        sixth = next(r for r in rows if r["game_date"] == "2026-01-11")
+        assert sixth["player_last5_games_played"] == 5
+        # points over games 1-5: 2,1,2,0,3 = 8 → avg 1.6
+        expected_pts = round((2 + 1 + 2 + 0 + 3) / 5, 3)
+        assert sixth["player_points_last5"] == pytest.approx(expected_pts, abs=0.001)
+
+    def test_last10_window(self, db_with_logs):
+        rows = db_with_logs.get_player_rolling_stats(999)
+        # 7th game (Jan 13) has 6 preceding games → last10 games_played == 6
+        seventh = next(r for r in rows if r["game_date"] == "2026-01-13")
+        assert seventh["player_last10_games_played"] == 6
+        # last5 also capped at 5
+        assert seventh["player_last5_games_played"] == 5
+
+    def test_shots_rolling_value(self, db_with_logs):
+        rows = db_with_logs.get_player_rolling_stats(999)
+        # 3rd game (Jan 05) has 2 preceding: shots 4 and 3 → avg 3.5
+        third = next(r for r in rows if r["game_date"] == "2026-01-05")
+        assert third["player_shots_last5"] == pytest.approx(3.5, abs=0.01)
+
+    def test_toi_rolling_value(self, db_with_logs):
+        rows = db_with_logs.get_player_rolling_stats(999)
+        # 3rd game has 2 preceding: toi_seconds 1200 and 1100 → avg 1150
+        third = next(r for r in rows if r["game_date"] == "2026-01-05")
+        assert third["player_TOI_last5"] == pytest.approx(1150.0, abs=0.5)
+
+    def test_season_filter(self, db_with_logs):
+        rows_filtered = db_with_logs.get_player_rolling_stats(999, season="20252026")
+        rows_all = db_with_logs.get_player_rolling_stats(999)
+        assert len(rows_filtered) == len(rows_all)

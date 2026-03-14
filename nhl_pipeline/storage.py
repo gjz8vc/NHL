@@ -191,6 +191,51 @@ CREATE TABLE IF NOT EXISTS pipeline_runs (
 # goalie_rolling_stats: per-goalie rolling averages of the 5 games played
 # BEFORE the current game (using SQLite window functions, available since 3.25).
 _DDL_VIEWS = """
+-- player_rolling_stats: per-skater rolling averages of points, shots, and TOI
+-- computed over the 5 and 10 games BEFORE the current game (no data leakage).
+CREATE VIEW IF NOT EXISTS player_rolling_stats AS
+SELECT
+    player_id,
+    game_id,
+    game_date,
+    team_abbr,
+    points,
+    shots,
+    toi_seconds,
+    -- Rolling averages over up to 5 preceding games
+    ROUND(AVG(COALESCE(points, 0)) OVER (
+        PARTITION BY player_id
+        ORDER BY game_date
+        ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+    ), 3) AS player_points_last5,
+    ROUND(AVG(COALESCE(shots, 0)) OVER (
+        PARTITION BY player_id
+        ORDER BY game_date
+        ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+    ), 3) AS player_shots_last5,
+    ROUND(AVG(toi_seconds) OVER (
+        PARTITION BY player_id
+        ORDER BY game_date
+        ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+    ), 1) AS player_TOI_last5,
+    COUNT(*) OVER (
+        PARTITION BY player_id
+        ORDER BY game_date
+        ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+    ) AS player_last5_games_played,
+    -- Rolling averages over up to 10 preceding games
+    ROUND(AVG(COALESCE(points, 0)) OVER (
+        PARTITION BY player_id
+        ORDER BY game_date
+        ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
+    ), 3) AS player_points_last10,
+    COUNT(*) OVER (
+        PARTITION BY player_id
+        ORDER BY game_date
+        ROWS BETWEEN 10 PRECEDING AND 1 PRECEDING
+    ) AS player_last10_games_played
+FROM player_game_logs;
+
 CREATE VIEW IF NOT EXISTS goalie_rolling_stats AS
 SELECT
     player_id,
@@ -281,6 +326,14 @@ SELECT
     grs.recent_5g_gaa        AS opp_goalie_recent_5g_gaa,
     grs.recent_5g_games_played AS opp_goalie_recent_5g_games,
 
+    -- ── Player rolling form (last 5 / 10 games before this game) ─────────
+    prs.player_points_last5,
+    prs.player_points_last10,
+    prs.player_shots_last5,
+    prs.player_TOI_last5,
+    prs.player_last5_games_played,
+    prs.player_last10_games_played,
+
     -- ── Binary target ─────────────────────────────────────────────────────
     CASE
         WHEN (COALESCE(pgl.goals, 0) + COALESCE(pgl.assists, 0)) >= 1 THEN 1
@@ -319,6 +372,11 @@ LEFT JOIN rosters og_r
 LEFT JOIN goalie_rolling_stats grs
     ON  ggl.player_id = grs.player_id
     AND ggl.game_id   = grs.game_id
+
+-- Player's own rolling form
+LEFT JOIN player_rolling_stats prs
+    ON  pgl.player_id = prs.player_id
+    AND pgl.game_id   = prs.game_id
 
 -- Exclude goalies from the dataset (skaters only)
 WHERE r.position != 'G'
@@ -626,6 +684,29 @@ class Database:
                 " ORDER BY game_date",
                 (player_id,),
             ).fetchall()
+        return [dict(r) for r in rows]
+
+    def get_player_rolling_stats(
+        self,
+        player_id: int,
+        season: Optional[str] = None,
+    ) -> list[dict]:
+        """Return pre-computed rolling points, shots, and TOI for a skater."""
+        sql = "SELECT * FROM player_rolling_stats WHERE player_id = ?"
+        params: list = [player_id]
+        if season:
+            sql = (
+                "SELECT prs.* FROM player_rolling_stats prs"
+                " JOIN player_game_logs pgl"
+                "  ON prs.player_id = pgl.player_id AND prs.game_id = pgl.game_id"
+                " WHERE prs.player_id = ? AND pgl.season = ?"
+                " ORDER BY prs.game_date"
+            )
+            params.append(season)
+        else:
+            sql += " ORDER BY game_date"
+        with self._conn() as con:
+            rows = con.execute(sql, params).fetchall()
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
