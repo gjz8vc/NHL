@@ -44,6 +44,21 @@ Examples
 
 # Show recent pipeline run history:
     python run_pipeline.py history
+
+# ── ML commands ──────────────────────────────────────────────────────────
+
+# Seed DB with synthetic data (useful for offline testing / first-time setup):
+    python run_pipeline.py seed
+    python run_pipeline.py seed --games 800
+
+# Train the point-scoring probability model on data in the DB:
+    python run_pipeline.py train
+    python run_pipeline.py train --model data/my_model.pkl
+
+# Predict tonight's point scorers (requires a trained model):
+    python run_pipeline.py predict
+    python run_pipeline.py predict --date 2026-03-16 --top 25
+    python run_pipeline.py predict --games "BOS NJD" "LAK NYR" --top 20
 """
 
 from __future__ import annotations
@@ -52,10 +67,13 @@ import argparse
 import json
 import logging
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
+from pathlib import Path
 
-from nhl_pipeline.config import PipelineConfig
+from nhl_pipeline.config import PipelineConfig, BASE_DIR
 from nhl_pipeline.pipeline import NHLPipeline
+
+_DEFAULT_MODEL_PATH = BASE_DIR / "model.pkl"
 
 
 def _setup_logging(verbose: bool) -> None:
@@ -183,6 +201,59 @@ def _build_parser() -> argparse.ArgumentParser:
     # ---- history ------------------------------------------------------
     p_hist = sub.add_parser("history", help="Show recent pipeline run history")
     p_hist.add_argument("--limit", type=int, default=10)
+
+    # ---- seed ---------------------------------------------------------
+    p_seed = sub.add_parser(
+        "seed",
+        help="Seed the DB with synthetic data for offline training / testing",
+    )
+    p_seed.add_argument(
+        "--games", type=int, default=500,
+        help="Number of games to simulate (default: 500, ~18k rows)",
+    )
+
+    # ---- train --------------------------------------------------------
+    p_train = sub.add_parser(
+        "train",
+        help="Train the point-scoring probability model on data in the DB",
+    )
+    p_train.add_argument(
+        "--model", metavar="FILE", default=None,
+        help=f"Where to save the model pickle (default: {_DEFAULT_MODEL_PATH})",
+    )
+    p_train.add_argument(
+        "--team", metavar="ABBR",
+        help="Restrict training data to one team (for quick testing)",
+    )
+
+    # ---- predict ------------------------------------------------------
+    p_pred = sub.add_parser(
+        "predict",
+        help="Predict point-scoring probabilities for tonight's skaters",
+    )
+    p_pred.add_argument(
+        "--date", metavar="YYYY-MM-DD", default=None,
+        help="Date to predict for (default: today UTC)",
+    )
+    p_pred.add_argument(
+        "--model", metavar="FILE", default=None,
+        help=f"Path to trained model pickle (default: {_DEFAULT_MODEL_PATH})",
+    )
+    p_pred.add_argument(
+        "--top", type=int, default=30, metavar="N",
+        help="Show top N players (default: 30)",
+    )
+    p_pred.add_argument(
+        "--games", nargs="+", metavar="HOME AWAY",
+        help=(
+            "Override tonight's matchups when schedule isn't in DB. "
+            "Provide pairs: --games 'BOS NJD' 'LAK NYR'"
+        ),
+    )
+    p_pred.add_argument(
+        "--json", dest="output_json", action="store_true",
+        help="Output raw JSON instead of formatted table",
+    )
 
     return parser
 
@@ -360,6 +431,108 @@ def main(argv: list[str] | None = None) -> int:
     elif args.command == "history":
         rows = pipeline.run_history(limit=args.limit)
         print(json.dumps(rows, indent=2))
+        return 0
+
+    # ------------------------------------------------------------------
+    elif args.command == "seed":
+        from nhl_pipeline.seeder import seed_database
+        inserted = seed_database(config.db_path, n_games=args.games)
+        print(json.dumps({
+            "status":  "ok",
+            "games_simulated": args.games,
+            "rows_inserted":   inserted,
+            "db_path": str(config.db_path),
+        }, indent=2))
+        return 0
+
+    # ------------------------------------------------------------------
+    elif args.command == "train":
+        from nhl_pipeline.model import PointScoringModel
+        model_path = Path(args.model) if args.model else _DEFAULT_MODEL_PATH
+
+        rows = pipeline.point_dataset(
+            team_abbr=args.team.upper() if args.team else None
+        )
+        if not rows:
+            print(
+                "ERROR: No training data found in the DB.\n"
+                "Run  python run_pipeline.py seed  to generate synthetic data, or\n"
+                "backfill real data first with the gamelogs / gamestats commands.",
+                file=sys.stderr,
+            )
+            return 1
+
+        model = PointScoringModel()
+        metrics = model.train(rows)
+        model.save(model_path)
+
+        print(model.summary())
+        print()
+        print(json.dumps({
+            "model_path": str(model_path),
+            "metrics":    metrics,
+        }, indent=2))
+        return 0
+
+    # ------------------------------------------------------------------
+    elif args.command == "predict":
+        from nhl_pipeline.predictor import TonightPredictor
+        model_path = Path(args.model) if args.model else _DEFAULT_MODEL_PATH
+
+        if not model_path.exists():
+            print(
+                f"ERROR: Model not found at {model_path}.\n"
+                "Train a model first:  python run_pipeline.py train",
+                file=sys.stderr,
+            )
+            return 1
+
+        game_date = args.date or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+
+        # Parse --games overrides: each value is "HOME AWAY"
+        game_overrides: list[tuple[str, str]] | None = None
+        if args.games:
+            game_overrides = []
+            for pair in args.games:
+                parts = pair.upper().split()
+                if len(parts) != 2:
+                    print(
+                        f"ERROR: --games expects 'HOME AWAY' pairs, got: {pair!r}",
+                        file=sys.stderr,
+                    )
+                    return 1
+                game_overrides.append((parts[0], parts[1]))
+
+        predictor = TonightPredictor(config.db_path, model_path)
+        preds = predictor.predict_date(
+            game_date=game_date,
+            game_overrides=game_overrides,
+            top_n=args.top,
+        )
+
+        if not preds:
+            print(
+                f"No predictions generated for {game_date}.\n"
+                "Make sure the DB has roster data, or pass --games HOME AWAY pairs.",
+                file=sys.stderr,
+            )
+            return 1
+
+        if args.output_json:
+            print(json.dumps([{
+                "rank":         i + 1,
+                "player_name":  p.player_name,
+                "player_id":    p.player_id,
+                "team":         p.team_abbr,
+                "opponent":     p.opponent_abbr,
+                "position":     p.position,
+                "home_away":    p.home_away,
+                "score_prob":   round(p.score_prob, 4),
+            } for i, p in enumerate(preds)], indent=2))
+        else:
+            print(f"\nPoint-scoring predictions for {game_date}")
+            print(predictor.format_table(preds, top_n=args.top))
+
         return 0
 
     return 0
