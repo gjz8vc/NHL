@@ -140,6 +140,7 @@ PLAYERS_2526: list[dict[str, Any]] = [
     # ── Boston Bruins ────────────────────────────────────────────────────
     {"id": 8477956, "name": "David Pastrnak",      "team": "BOS", "pos": "RW", "ppg": 0.74, "spg": 4.2, "toi": 1250},
     {"id": 8473419, "name": "Brad Marchand",       "team": "BOS", "pos": "LW", "ppg": 0.50, "spg": 2.8, "toi": 1140},
+    {"id": 8471756, "name": "Nick Foligno",        "team": "BOS", "pos": "LW", "ppg": 0.22, "spg": 1.6, "toi":  900},
     {"id": 8477493, "name": "Charlie Coyle",       "team": "BOS", "pos": "C",  "ppg": 0.30, "spg": 2.0, "toi":  960},
     {"id": 8479675, "name": "Morgan Geekie",       "team": "BOS", "pos": "C",  "ppg": 0.36, "spg": 2.4, "toi": 1020},
     {"id": 8481533, "name": "Elias Lindholm",      "team": "BOS", "pos": "C",  "ppg": 0.40, "spg": 2.6, "toi": 1080},
@@ -228,6 +229,7 @@ PLAYERS_2526: list[dict[str, Any]] = [
 
     # ── Florida Panthers ────────────────────────────────────────────────
     {"id": 8477933, "name": "Sam Reinhart",        "team": "FLA", "pos": "RW", "ppg": 0.58, "spg": 3.4, "toi": 1200},
+    {"id": 8484144, "name": "Mackie Samoskevich",  "team": "FLA", "pos": "RW", "ppg": 0.32, "spg": 2.2, "toi":  960},
     {"id": 8476346, "name": "Carter Verhaeghe",    "team": "FLA", "pos": "LW", "ppg": 0.44, "spg": 3.0, "toi": 1050},
     {"id": 8479675, "name": "Evan Rodrigues",      "team": "FLA", "pos": "C",  "ppg": 0.32, "spg": 2.2, "toi":  960},
     {"id": 8481533, "name": "Eetu Luostarinen",    "team": "FLA", "pos": "C",  "ppg": 0.28, "spg": 2.0, "toi":  960},
@@ -247,6 +249,7 @@ PLAYERS_2526: list[dict[str, Any]] = [
     # ── Vegas Golden Knights ─────────────────────────────────────────────
     {"id": 8478476, "name": "Jack Eichel",         "team": "VGK", "pos": "C",  "ppg": 0.66, "spg": 3.5, "toi": 1250},
     {"id": 8480762, "name": "Mitch Marner",        "team": "VGK", "pos": "RW", "ppg": 0.64, "spg": 3.0, "toi": 1200},
+    {"id": 8475233, "name": "Mark Stone",          "team": "VGK", "pos": "RW", "ppg": 0.44, "spg": 2.4, "toi": 1050},
     {"id": 8478476, "name": "Ivan Barbashev",      "team": "VGK", "pos": "C",  "ppg": 0.42, "spg": 2.6, "toi": 1080},
     {"id": 8481533, "name": "Pavel Dorofeyev",     "team": "VGK", "pos": "LW", "ppg": 0.38, "spg": 2.6, "toi": 1050},
     {"id": 8476853, "name": "William Karlsson",    "team": "VGK", "pos": "C",  "ppg": 0.36, "spg": 2.4, "toi": 1020},
@@ -277,6 +280,140 @@ PLAYERS_2526: list[dict[str, Any]] = [
     {"id": 8479425, "name": "Jordan Eberle",       "team": "SEA", "pos": "RW", "ppg": 0.32, "spg": 2.2, "toi":  960},
     {"id": 8480762, "name": "Brandon Montour",     "team": "SEA", "pos": "D",  "ppg": 0.36, "spg": 2.2, "toi": 1440},
     {"id": 8479354, "name": "Vince Dunn",          "team": "SEA", "pos": "D",  "ppg": 0.32, "spg": 2.0, "toi": 1380},
+
+    # ── Colorado Avalanche ───────────────────────────────────────────────
+    {"id": 8477492, "name": "Nathan MacKinnon",    "team": "COL", "pos": "C",  "ppg": 1.20, "spg": 5.0, "toi": 1380},
+    {"id": 8490001, "name": "Ross Colton",         "team": "COL", "pos": "C",  "ppg": 0.36, "spg": 2.2, "toi": 1020},
+    {"id": 8490002, "name": "Miles Wood",          "team": "COL", "pos": "LW", "ppg": 0.28, "spg": 2.0, "toi":  960},
+    {"id": 8478476, "name": "Mikko Rantanen",      "team": "COL", "pos": "RW", "ppg": 0.84, "spg": 3.8, "toi": 1250},
+    {"id": 8490003, "name": "Logan O'Connor",      "team": "COL", "pos": "RW", "ppg": 0.22, "spg": 1.6, "toi":  840},
+    {"id": 8490004, "name": "Valeri Nichushkin",   "team": "COL", "pos": "LW", "ppg": 0.48, "spg": 2.8, "toi": 1100},
+    {"id": 8480113, "name": "Cale Makar",          "team": "COL", "pos": "D",  "ppg": 0.90, "spg": 3.2, "toi": 1500},
+    {"id": 8490005, "name": "Devon Toews",         "team": "COL", "pos": "D",  "ppg": 0.44, "spg": 2.2, "toi": 1380},
+
+    # ── Dallas Stars ─────────────────────────────────────────────────────
+    {"id": 8490010, "name": "Roope Hintz",         "team": "DAL", "pos": "C",  "ppg": 0.66, "spg": 3.2, "toi": 1200},
+    {"id": 8490011, "name": "Tyler Seguin",        "team": "DAL", "pos": "C",  "ppg": 0.44, "spg": 2.4, "toi": 1080},
+    {"id": 8490012, "name": "Jason Robertson",     "team": "DAL", "pos": "LW", "ppg": 0.80, "spg": 3.8, "toi": 1200},
+    {"id": 8490013, "name": "Logan Stankoven",     "team": "DAL", "pos": "LW", "ppg": 0.44, "spg": 2.8, "toi": 1050},
+    {"id": 8490014, "name": "Wyatt Johnston",      "team": "DAL", "pos": "RW", "ppg": 0.48, "spg": 2.6, "toi": 1050},
+    {"id": 8490015, "name": "Miro Heiskanen",      "team": "DAL", "pos": "D",  "ppg": 0.58, "spg": 2.6, "toi": 1440},
+    {"id": 8490016, "name": "Thomas Harley",       "team": "DAL", "pos": "D",  "ppg": 0.42, "spg": 2.2, "toi": 1320},
+
+    # ── Detroit Red Wings ────────────────────────────────────────────────
+    {"id": 8490020, "name": "Dylan Larkin",        "team": "DET", "pos": "C",  "ppg": 0.66, "spg": 3.2, "toi": 1200},
+    {"id": 8490021, "name": "Andrew Copp",         "team": "DET", "pos": "C",  "ppg": 0.30, "spg": 2.0, "toi":  960},
+    {"id": 8490022, "name": "Patrick Kane",        "team": "DET", "pos": "RW", "ppg": 0.52, "spg": 2.6, "toi": 1100},
+    {"id": 8490023, "name": "Lucas Raymond",       "team": "DET", "pos": "RW", "ppg": 0.60, "spg": 3.0, "toi": 1150},
+    {"id": 8490024, "name": "David Perron",        "team": "DET", "pos": "LW", "ppg": 0.36, "spg": 2.0, "toi":  980},
+    {"id": 8490025, "name": "Moritz Seider",       "team": "DET", "pos": "D",  "ppg": 0.42, "spg": 2.2, "toi": 1440},
+    {"id": 8490026, "name": "Shayne Gostisbehere", "team": "DET", "pos": "D",  "ppg": 0.40, "spg": 2.0, "toi": 1380},
+
+    # ── New Jersey Devils ────────────────────────────────────────────────
+    {"id": 8490030, "name": "Jack Hughes",         "team": "NJD", "pos": "C",  "ppg": 0.80, "spg": 3.8, "toi": 1280},
+    {"id": 8490031, "name": "Nico Hischier",       "team": "NJD", "pos": "C",  "ppg": 0.60, "spg": 2.8, "toi": 1180},
+    {"id": 8490032, "name": "Timo Meier",          "team": "NJD", "pos": "LW", "ppg": 0.52, "spg": 2.8, "toi": 1100},
+    {"id": 8490033, "name": "Jesper Bratt",        "team": "NJD", "pos": "RW", "ppg": 0.66, "spg": 3.0, "toi": 1150},
+    {"id": 8490034, "name": "Stefan Noesen",       "team": "NJD", "pos": "RW", "ppg": 0.28, "spg": 2.0, "toi":  900},
+    {"id": 8490035, "name": "Dougie Hamilton",     "team": "NJD", "pos": "D",  "ppg": 0.54, "spg": 2.4, "toi": 1440},
+    {"id": 8490036, "name": "Jonas Siegenthaler",  "team": "NJD", "pos": "D",  "ppg": 0.22, "spg": 1.6, "toi": 1260},
+
+    # ── New York Rangers ─────────────────────────────────────────────────
+    {"id": 8490040, "name": "Vincent Trocheck",    "team": "NYR", "pos": "C",  "ppg": 0.52, "spg": 2.6, "toi": 1150},
+    {"id": 8490041, "name": "Filip Chytil",        "team": "NYR", "pos": "C",  "ppg": 0.36, "spg": 2.2, "toi": 1020},
+    {"id": 8490042, "name": "Artemi Panarin",      "team": "NYR", "pos": "LW", "ppg": 0.86, "spg": 3.6, "toi": 1200},
+    {"id": 8490043, "name": "Chris Kreider",       "team": "NYR", "pos": "LW", "ppg": 0.42, "spg": 3.0, "toi": 1050},
+    {"id": 8490044, "name": "Alexis Lafreniere",   "team": "NYR", "pos": "LW", "ppg": 0.44, "spg": 2.8, "toi": 1050},
+    {"id": 8490045, "name": "Kaapo Kakko",         "team": "NYR", "pos": "RW", "ppg": 0.34, "spg": 2.2, "toi": 1000},
+    {"id": 8490046, "name": "Adam Fox",            "team": "NYR", "pos": "D",  "ppg": 0.74, "spg": 2.6, "toi": 1500},
+    {"id": 8490047, "name": "Jacob Trouba",        "team": "NYR", "pos": "D",  "ppg": 0.24, "spg": 1.8, "toi": 1320},
+
+    # ── Ottawa Senators ──────────────────────────────────────────────────
+    {"id": 8490050, "name": "Tim Stutzle",         "team": "OTT", "pos": "C",  "ppg": 0.64, "spg": 3.0, "toi": 1180},
+    {"id": 8490051, "name": "Claude Giroux",       "team": "OTT", "pos": "C",  "ppg": 0.42, "spg": 2.2, "toi": 1020},
+    {"id": 8490052, "name": "Brady Tkachuk",       "team": "OTT", "pos": "LW", "ppg": 0.60, "spg": 2.8, "toi": 1200},
+    {"id": 8490053, "name": "Alex DeBrincat",      "team": "OTT", "pos": "RW", "ppg": 0.58, "spg": 2.8, "toi": 1100},
+    {"id": 8490054, "name": "Thomas Chabot",       "team": "OTT", "pos": "D",  "ppg": 0.44, "spg": 2.2, "toi": 1440},
+    {"id": 8490055, "name": "Jake Sanderson",      "team": "OTT", "pos": "D",  "ppg": 0.36, "spg": 2.0, "toi": 1320},
+
+    # ── Philadelphia Flyers ──────────────────────────────────────────────
+    {"id": 8490060, "name": "Sean Couturier",      "team": "PHI", "pos": "C",  "ppg": 0.48, "spg": 2.4, "toi": 1150},
+    {"id": 8490061, "name": "Scott Laughton",      "team": "PHI", "pos": "C",  "ppg": 0.28, "spg": 1.8, "toi":  960},
+    {"id": 8490062, "name": "Joel Farabee",        "team": "PHI", "pos": "LW", "ppg": 0.38, "spg": 2.4, "toi": 1050},
+    {"id": 8490063, "name": "Travis Konecny",      "team": "PHI", "pos": "RW", "ppg": 0.58, "spg": 3.0, "toi": 1150},
+    {"id": 8490064, "name": "Owen Tippett",        "team": "PHI", "pos": "RW", "ppg": 0.38, "spg": 2.4, "toi": 1000},
+    {"id": 8490065, "name": "Travis Sanheim",      "team": "PHI", "pos": "D",  "ppg": 0.36, "spg": 1.8, "toi": 1380},
+    {"id": 8490066, "name": "Cam York",            "team": "PHI", "pos": "D",  "ppg": 0.30, "spg": 1.8, "toi": 1260},
+
+    # ── Pittsburgh Penguins ──────────────────────────────────────────────
+    {"id": 8490070, "name": "Sidney Crosby",       "team": "PIT", "pos": "C",  "ppg": 0.90, "spg": 3.6, "toi": 1280},
+    {"id": 8490071, "name": "Evgeni Malkin",       "team": "PIT", "pos": "C",  "ppg": 0.68, "spg": 3.0, "toi": 1200},
+    {"id": 8490072, "name": "Rickard Rakell",      "team": "PIT", "pos": "RW", "ppg": 0.44, "spg": 2.6, "toi": 1050},
+    {"id": 8490073, "name": "Bryan Rust",          "team": "PIT", "pos": "RW", "ppg": 0.32, "spg": 2.2, "toi":  980},
+    {"id": 8490074, "name": "Reilly Smith",        "team": "PIT", "pos": "LW", "ppg": 0.30, "spg": 2.0, "toi":  960},
+    {"id": 8490075, "name": "Kris Letang",         "team": "PIT", "pos": "D",  "ppg": 0.44, "spg": 2.2, "toi": 1440},
+    {"id": 8490076, "name": "Marcus Pettersson",   "team": "PIT", "pos": "D",  "ppg": 0.26, "spg": 1.8, "toi": 1320},
+
+    # ── St. Louis Blues ──────────────────────────────────────────────────
+    {"id": 8490080, "name": "Robert Thomas",       "team": "STL", "pos": "C",  "ppg": 0.68, "spg": 2.8, "toi": 1200},
+    {"id": 8490081, "name": "Brayden Schenn",      "team": "STL", "pos": "C",  "ppg": 0.36, "spg": 2.0, "toi": 1020},
+    {"id": 8490082, "name": "Pavel Buchnevich",    "team": "STL", "pos": "LW", "ppg": 0.60, "spg": 2.8, "toi": 1150},
+    {"id": 8490083, "name": "Jordan Kyrou",        "team": "STL", "pos": "RW", "ppg": 0.60, "spg": 3.2, "toi": 1150},
+    {"id": 8490084, "name": "Brandon Saad",        "team": "STL", "pos": "LW", "ppg": 0.26, "spg": 1.8, "toi":  960},
+    {"id": 8490085, "name": "Torey Krug",          "team": "STL", "pos": "D",  "ppg": 0.46, "spg": 2.2, "toi": 1440},
+    {"id": 8490086, "name": "Colton Parayko",      "team": "STL", "pos": "D",  "ppg": 0.30, "spg": 1.8, "toi": 1320},
+
+    # ── Utah Hockey Club ─────────────────────────────────────────────────
+    {"id": 8490090, "name": "Clayton Keller",      "team": "UTA", "pos": "RW", "ppg": 0.64, "spg": 3.0, "toi": 1200},
+    {"id": 8490091, "name": "Nick Schmaltz",       "team": "UTA", "pos": "C",  "ppg": 0.56, "spg": 2.6, "toi": 1150},
+    {"id": 8490092, "name": "Logan Cooley",        "team": "UTA", "pos": "C",  "ppg": 0.44, "spg": 2.6, "toi": 1050},
+    {"id": 8490093, "name": "Lawson Crouse",       "team": "UTA", "pos": "LW", "ppg": 0.36, "spg": 2.4, "toi": 1050},
+    {"id": 8490094, "name": "Dylan Guenther",      "team": "UTA", "pos": "RW", "ppg": 0.44, "spg": 2.6, "toi": 1050},
+    {"id": 8490095, "name": "Mikhail Sergachev",   "team": "UTA", "pos": "D",  "ppg": 0.52, "spg": 2.4, "toi": 1440},
+    {"id": 8490096, "name": "Juuso Valimaki",      "team": "UTA", "pos": "D",  "ppg": 0.24, "spg": 1.6, "toi": 1260},
+
+    # ── Washington Capitals ──────────────────────────────────────────────
+    {"id": 8490100, "name": "Dylan Strome",        "team": "WSH", "pos": "C",  "ppg": 0.60, "spg": 2.8, "toi": 1150},
+    {"id": 8490101, "name": "Nicklas Backstrom",   "team": "WSH", "pos": "C",  "ppg": 0.40, "spg": 2.0, "toi": 1050},
+    {"id": 8490102, "name": "Alex Ovechkin",       "team": "WSH", "pos": "LW", "ppg": 0.74, "spg": 4.0, "toi": 1150},
+    {"id": 8490103, "name": "Tom Wilson",          "team": "WSH", "pos": "RW", "ppg": 0.44, "spg": 2.8, "toi": 1050},
+    {"id": 8490104, "name": "Anthony Mantha",      "team": "WSH", "pos": "RW", "ppg": 0.30, "spg": 2.0, "toi":  960},
+    {"id": 8490105, "name": "John Carlson",        "team": "WSH", "pos": "D",  "ppg": 0.40, "spg": 2.0, "toi": 1380},
+    {"id": 8490106, "name": "Rasmus Sandin",       "team": "WSH", "pos": "D",  "ppg": 0.32, "spg": 1.8, "toi": 1260},
+
+    # ── Anaheim Ducks ────────────────────────────────────────────────────
+    {"id": 8490110, "name": "Mason McTavish",      "team": "ANA", "pos": "C",  "ppg": 0.44, "spg": 2.8, "toi": 1100},
+    {"id": 8490111, "name": "Leo Carlsson",        "team": "ANA", "pos": "C",  "ppg": 0.38, "spg": 2.4, "toi": 1020},
+    {"id": 8490112, "name": "Troy Terry",          "team": "ANA", "pos": "RW", "ppg": 0.42, "spg": 2.8, "toi": 1050},
+    {"id": 8490113, "name": "Alex Killorn",        "team": "ANA", "pos": "LW", "ppg": 0.30, "spg": 2.0, "toi":  960},
+    {"id": 8490114, "name": "Cam Fowler",          "team": "ANA", "pos": "D",  "ppg": 0.36, "spg": 2.2, "toi": 1400},
+    {"id": 8490115, "name": "Jamie Drysdale",      "team": "ANA", "pos": "D",  "ppg": 0.30, "spg": 2.0, "toi": 1320},
+
+    # ── Calgary Flames ───────────────────────────────────────────────────
+    {"id": 8490120, "name": "Nazem Kadri",         "team": "CGY", "pos": "C",  "ppg": 0.52, "spg": 2.8, "toi": 1150},
+    {"id": 8490121, "name": "Mikael Backlund",     "team": "CGY", "pos": "C",  "ppg": 0.38, "spg": 2.0, "toi": 1020},
+    {"id": 8490122, "name": "Jonathan Huberdeau",  "team": "CGY", "pos": "LW", "ppg": 0.48, "spg": 2.4, "toi": 1100},
+    {"id": 8490123, "name": "Dryden Hunt",         "team": "CGY", "pos": "LW", "ppg": 0.22, "spg": 1.6, "toi":  900},
+    {"id": 8490124, "name": "Martin Pospisil",     "team": "CGY", "pos": "RW", "ppg": 0.26, "spg": 1.8, "toi":  920},
+    {"id": 8490125, "name": "MacKenzie Weegar",    "team": "CGY", "pos": "D",  "ppg": 0.38, "spg": 2.2, "toi": 1440},
+    {"id": 8490126, "name": "Rasmus Andersson",    "team": "CGY", "pos": "D",  "ppg": 0.36, "spg": 2.0, "toi": 1380},
+
+    # ── Los Angeles Kings ────────────────────────────────────────────────
+    {"id": 8490130, "name": "Anze Kopitar",        "team": "LAK", "pos": "C",  "ppg": 0.52, "spg": 2.4, "toi": 1150},
+    {"id": 8490131, "name": "Phillip Danault",     "team": "LAK", "pos": "C",  "ppg": 0.28, "spg": 1.8, "toi":  960},
+    {"id": 8490132, "name": "Adrian Kempe",        "team": "LAK", "pos": "LW", "ppg": 0.52, "spg": 3.0, "toi": 1100},
+    {"id": 8490133, "name": "Kevin Fiala",         "team": "LAK", "pos": "LW", "ppg": 0.54, "spg": 2.8, "toi": 1100},
+    {"id": 8490134, "name": "Quinton Byfield",     "team": "LAK", "pos": "C",  "ppg": 0.48, "spg": 2.6, "toi": 1080},
+    {"id": 8490135, "name": "Drew Doughty",        "team": "LAK", "pos": "D",  "ppg": 0.44, "spg": 2.2, "toi": 1440},
+    {"id": 8490136, "name": "Mikey Anderson",      "team": "LAK", "pos": "D",  "ppg": 0.22, "spg": 1.6, "toi": 1260},
+
+    # ── MDA (Simulated expansion team) ───────────────────────────────────
+    {"id": 8490140, "name": "Alexei Toropchenko",  "team": "MDA", "pos": "C",  "ppg": 0.34, "spg": 2.2, "toi": 1050},
+    {"id": 8490141, "name": "Ivan Lodnia",         "team": "MDA", "pos": "C",  "ppg": 0.28, "spg": 1.8, "toi":  960},
+    {"id": 8490142, "name": "Klim Kostin",         "team": "MDA", "pos": "LW", "ppg": 0.26, "spg": 1.8, "toi":  940},
+    {"id": 8490143, "name": "Ruslan Iskhakov",     "team": "MDA", "pos": "RW", "ppg": 0.30, "spg": 2.0, "toi":  980},
+    {"id": 8490144, "name": "Alexander Nikishin",  "team": "MDA", "pos": "D",  "ppg": 0.32, "spg": 1.8, "toi": 1320},
+    {"id": 8490145, "name": "Daemon Hunt",         "team": "MDA", "pos": "D",  "ppg": 0.20, "spg": 1.4, "toi": 1200},
 ]
 
 

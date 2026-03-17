@@ -59,6 +59,12 @@ Examples
     python run_pipeline.py predict
     python run_pipeline.py predict --date 2026-03-16 --top 25
     python run_pipeline.py predict --games "BOS NJD" "LAK NYR" --top 20
+
+# Show players currently on point streaks:
+    python run_pipeline.py streaks
+    python run_pipeline.py streaks --min 3
+    python run_pipeline.py streaks --tonight
+    python run_pipeline.py streaks --date 2025-12-20 --min 5
 """
 
 from __future__ import annotations
@@ -70,8 +76,31 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from collections import defaultdict
+
 from nhl_pipeline.config import PipelineConfig, BASE_DIR
 from nhl_pipeline.pipeline import NHLPipeline
+
+
+def _build_real_name_map() -> dict[str, str]:
+    """Return a mapping of seeded placeholders (e.g. 'C1_EDM') to real player names.
+
+    Uses the players_2526.py database: for each (team, position) group, players
+    are ranked by points-per-game descending so C1_EDM = highest-PPG centre on EDM.
+    """
+    from nhl_pipeline.players_2526 import PLAYERS_2526
+
+    by_team_pos: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for p in PLAYERS_2526:
+        by_team_pos[(p["team"], p["pos"])].append(p)
+
+    name_map: dict[str, str] = {}
+    for (team, pos), players in by_team_pos.items():
+        for rank, player in enumerate(
+            sorted(players, key=lambda x: x["ppg"], reverse=True), start=1
+        ):
+            name_map[f"{pos}{rank}_{team}"] = player["name"]
+    return name_map
 
 _DEFAULT_MODEL_PATH = BASE_DIR / "model.pkl"
 
@@ -260,6 +289,28 @@ def _build_parser() -> argparse.ArgumentParser:
             "Use the built-in 2025-26 real player database instead of DB rosters. "
             "Useful when the NHL API hasn't been backfilled yet."
         ),
+    )
+
+    # ---- streaks ------------------------------------------------------
+    p_streak = sub.add_parser(
+        "streaks",
+        help="Show players currently on point streaks",
+    )
+    p_streak.add_argument(
+        "--min", type=int, default=5, dest="min_streak", metavar="N",
+        help="Minimum streak length (default: 5)",
+    )
+    p_streak.add_argument(
+        "--date", metavar="YYYY-MM-DD", default=None,
+        help="Check streaks as of this date (default: most recent data in DB)",
+    )
+    p_streak.add_argument(
+        "--tonight", action="store_true",
+        help="Only show players who are playing tonight (uses --date for game lookup)",
+    )
+    p_streak.add_argument(
+        "--real-players", dest="real_players", action="store_true",
+        help="Map DB placeholder names to real 2025-26 player names",
     )
 
     return parser
@@ -569,6 +620,63 @@ def main(argv: list[str] | None = None) -> int:
             print(f"\nPoint-scoring predictions for {game_date}")
             print(predictor.format_table(preds, top_n=args.top))
 
+        return 0
+
+    # ------------------------------------------------------------------
+    elif args.command == "streaks":
+        from datetime import datetime, timezone
+
+        as_of = args.date  # may be None → uses all data in DB
+
+        rows = pipeline.point_streaks(
+            min_streak=args.min_streak,
+            as_of_date=as_of,
+        )
+
+        if not rows:
+            print(
+                f"No players found on a {args.min_streak}+ game point streak"
+                + (f" as of {as_of}" if as_of else "") + "."
+            )
+            return 0
+
+        # Optional: filter to players whose team is in tonight's games
+        if args.tonight:
+            game_date = as_of or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            tonight_games = pipeline.games_on(game_date)
+            tonight_teams = {
+                t
+                for g in tonight_games
+                for t in (g["home_team_abbr"], g["away_team_abbr"])
+            }
+            rows = [r for r in rows if r["team_abbr"] in tonight_teams]
+            if not rows:
+                print(
+                    f"No streak players found playing on {game_date}. "
+                    "Check that the schedule has been loaded for that date."
+                )
+                return 0
+
+        name_map = _build_real_name_map() if args.real_players else {}
+
+        # Header
+        date_label = f" as of {as_of}" if as_of else ""
+        tonight_label = " (tonight only)" if args.tonight else ""
+        print(
+            f"\n{args.min_streak}+ game point streaks{date_label}{tonight_label}\n"
+        )
+        print(
+            f"  {'#':>3}  {'Player':<28} {'Team':>5} {'Pos':>4}  "
+            f"{'Streak':>6}  {'Streak Start':>12}  {'Last Game':>12}"
+        )
+        print("  " + "-" * 74)
+        for i, r in enumerate(rows, 1):
+            display_name = name_map.get(r["full_name"], r["full_name"])
+            print(
+                f"  {i:>3}  {display_name:<28} {r['team_abbr']:>5} {r['position']:>4}  "
+                f"{r['streak_length']:>6}  {r['streak_start']:>12}  {r['last_game_date']:>12}"
+            )
+        print(f"\n  {len(rows)} player(s) on {args.min_streak}+ game point streaks")
         return 0
 
     return 0

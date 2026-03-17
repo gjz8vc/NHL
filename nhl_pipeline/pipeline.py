@@ -418,6 +418,23 @@ class NHLPipeline:
             team_abbr=team_abbr,
         )
 
+    def point_streaks(
+        self,
+        min_streak: int = 5,
+        season: Optional[str] = None,
+        as_of_date: Optional[str] = None,
+    ) -> list[dict]:
+        """Return skaters currently on a point streak of at least *min_streak* games.
+
+        Each row contains player_id, full_name, team_abbr, position,
+        streak_length, last_game_date, and streak_start.
+        """
+        return self._db.get_point_streaks(
+            min_streak=min_streak,
+            season=season or self.config.season,
+            as_of_date=as_of_date,
+        )
+
     def run_history(self, limit: int = 20) -> list[dict]:
         """Return the most recent pipeline run records."""
         return self._db.get_run_history(limit)

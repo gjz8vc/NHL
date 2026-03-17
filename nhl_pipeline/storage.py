@@ -750,6 +750,99 @@ class Database:
         return [dict(r) for r in rows]
 
     # ------------------------------------------------------------------
+    # Point streaks
+    # ------------------------------------------------------------------
+
+    def get_point_streaks(
+        self,
+        min_streak: int = 5,
+        season: str = "20252026",
+        as_of_date: Optional[str] = None,
+    ) -> list[dict]:
+        """Return skaters currently on a point streak of at least *min_streak* games.
+
+        Each row contains:
+          player_id, full_name, team_abbr, position,
+          streak_length, last_game_date, streak_start
+        ordered by streak_length desc, last_game_date desc.
+
+        Parameters
+        ----------
+        min_streak  : minimum consecutive games with ≥1 point (default 5)
+        season      : season string to query (default "20252026")
+        as_of_date  : only consider games on or before this ISO date (default: all)
+        """
+        date_filter = f"AND pgl.game_date <= '{as_of_date}'" if as_of_date else ""
+
+        sql = f"""
+        WITH player_games AS (
+            SELECT
+                pgl.player_id,
+                r.full_name,
+                r.team_abbr,
+                r.position,
+                pgl.game_date,
+                COALESCE(pgl.points, 0) AS points,
+                ROW_NUMBER() OVER (
+                    PARTITION BY pgl.player_id
+                    ORDER BY pgl.game_date DESC
+                ) AS rn
+            FROM player_game_logs pgl
+            JOIN rosters r
+                ON  pgl.player_id = r.player_id
+                AND pgl.season    = r.season
+            WHERE pgl.game_type = 2
+              AND pgl.season    = ?
+              AND r.position   != 'G'
+              AND r.position   IS NOT NULL
+              {date_filter}
+        ),
+        first_zero AS (
+            SELECT player_id, MIN(rn) AS zero_rn
+            FROM   player_games
+            WHERE  points = 0
+            GROUP BY player_id
+        ),
+        streak_base AS (
+            SELECT
+                pg.player_id,
+                pg.full_name,
+                pg.team_abbr,
+                pg.position,
+                COALESCE(fz.zero_rn - 1, 9999)              AS streak_cap,
+                MAX(pg.rn)                                   AS total_games,
+                MAX(CASE WHEN pg.rn = 1 THEN pg.game_date END) AS last_game_date
+            FROM  player_games pg
+            LEFT JOIN first_zero fz ON pg.player_id = fz.player_id
+            GROUP BY pg.player_id, pg.full_name, pg.team_abbr, pg.position, fz.zero_rn
+        ),
+        with_length AS (
+            SELECT
+                player_id, full_name, team_abbr, position, last_game_date,
+                MIN(streak_cap, total_games) AS streak_length
+            FROM streak_base
+        ),
+        with_start AS (
+            SELECT
+                wl.player_id, wl.full_name, wl.team_abbr, wl.position,
+                wl.last_game_date, wl.streak_length,
+                MIN(CASE WHEN pg.rn <= wl.streak_length THEN pg.game_date END) AS streak_start
+            FROM with_length wl
+            JOIN player_games pg ON wl.player_id = pg.player_id
+            GROUP BY wl.player_id, wl.full_name, wl.team_abbr, wl.position,
+                     wl.last_game_date, wl.streak_length
+        )
+        SELECT player_id, full_name, team_abbr, position,
+               streak_length, last_game_date, streak_start
+        FROM   with_start
+        WHERE  streak_length >= ?
+        ORDER  BY streak_length DESC, last_game_date DESC
+        """
+        with self._conn() as con:
+            rows = con.execute(sql, (season, min_streak)).fetchall()
+        return [dict(r) for r in rows]
+
+    # ------------------------------------------------------------------
     # Pipeline runs
     # ------------------------------------------------------------------
 
