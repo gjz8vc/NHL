@@ -254,6 +254,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "--json", dest="output_json", action="store_true",
         help="Output raw JSON instead of formatted table",
     )
+    p_pred.add_argument(
+        "--real-players", dest="real_players", action="store_true",
+        help=(
+            "Use the built-in 2025-26 real player database instead of DB rosters. "
+            "Useful when the NHL API hasn't been backfilled yet."
+        ),
+    )
 
     return parser
 
@@ -504,16 +511,45 @@ def main(argv: list[str] | None = None) -> int:
                 game_overrides.append((parts[0], parts[1]))
 
         predictor = TonightPredictor(config.db_path, model_path)
-        preds = predictor.predict_date(
-            game_date=game_date,
-            game_overrides=game_overrides,
-            top_n=args.top,
-        )
+
+        if args.real_players:
+            # Use the curated 2025-26 real player database
+            from nhl_pipeline.players_2526 import build_feature_rows
+
+            # Resolve matchups from DB or --games overrides
+            if game_overrides:
+                matchups = game_overrides
+            else:
+                db_games = predictor._games_for_date(game_date)
+                if not db_games:
+                    print(
+                        f"No games found in DB for {game_date}.\n"
+                        "Pass --games 'HOME AWAY' pairs, e.g.: --games 'TOR NYI' 'BOS MTL'",
+                        file=sys.stderr,
+                    )
+                    return 1
+                matchups = [(g["home_team_abbr"], g["away_team_abbr"]) for g in db_games]
+
+            feature_rows = build_feature_rows(matchups, game_date=game_date)
+            if not feature_rows:
+                print(
+                    "No feature rows built — check that team abbreviations match players_2526.py",
+                    file=sys.stderr,
+                )
+                return 1
+            preds = predictor.predict_from_rows(feature_rows, top_n=args.top)
+        else:
+            preds = predictor.predict_date(
+                game_date=game_date,
+                game_overrides=game_overrides,
+                top_n=args.top,
+            )
 
         if not preds:
             print(
                 f"No predictions generated for {game_date}.\n"
-                "Make sure the DB has roster data, or pass --games HOME AWAY pairs.",
+                "Use --real-players for the built-in 2025-26 player database, or\n"
+                "pass --games HOME AWAY pairs when the schedule isn't in the DB.",
                 file=sys.stderr,
             )
             return 1

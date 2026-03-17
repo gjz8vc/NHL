@@ -284,23 +284,75 @@ class TonightPredictor:
 
         return results
 
+    def predict_from_rows(
+        self,
+        feature_rows: list[dict],
+        top_n: int | None = None,
+    ) -> list[PlayerPrediction]:
+        """Run predictions directly from pre-built feature rows.
+
+        Used when roster data comes from players_2526 rather than the DB.
+        """
+        model = self._load_model()
+        probs = model.predict(feature_rows)
+
+        results: list[PlayerPrediction] = []
+        for row, prob in zip(feature_rows, probs):
+            results.append(PlayerPrediction(
+                player_id     = row["player_id"],
+                player_name   = row["player_name"],
+                team_abbr     = row["team_abbr"],
+                opponent_abbr = row["opponent_abbr"],
+                position      = row["position"],
+                home_away     = row["home_away"],
+                score_prob    = prob,
+                features      = {k: v for k, v in row.items()
+                                 if k not in ("player_id", "player_name", "team_abbr",
+                                              "opponent_abbr", "position", "home_away",
+                                              "game_date")},
+            ))
+
+        results.sort(key=lambda p: p.score_prob, reverse=True)
+        if top_n:
+            results = results[:top_n]
+        return results
+
     def format_table(
         self,
         predictions: list[PlayerPrediction],
         top_n: int = 30,
     ) -> str:
-        """Format predictions as a printable ranked table."""
-        header = (
-            f"\n{'Rank':<5} {'Player':<28} {'Team':<5} {'Opp':<5} "
-            f"{'Pos':<4} {'H/A':<4} {'Pts%':>6}\n"
-            + "-" * 62
-        )
-        lines = [header]
-        for i, p in enumerate(predictions[:top_n], 1):
-            ha = "HOME" if p.home_away == "H" else "AWAY"
-            opp = f"@ {p.opponent_abbr}" if p.home_away == "A" else f"vs {p.opponent_abbr}"
+        """Format predictions as a printable ranked table grouped by game."""
+        # Build ordered game list preserving first-seen order
+        seen_games: list[tuple[str, str]] = []
+        game_keys: dict[frozenset, tuple[str, str]] = {}
+        for p in predictions[:top_n]:
+            key = frozenset([p.team_abbr, p.opponent_abbr])
+            if key not in game_keys:
+                home = p.team_abbr if p.home_away == "H" else p.opponent_abbr
+                away = p.opponent_abbr if p.home_away == "H" else p.team_abbr
+                game_keys[key] = (home, away)
+                seen_games.append((home, away))
+
+        lines: list[str] = []
+        rank = 1
+        for home, away in seen_games:
+            lines.append(f"\n  {away} @ {home}")
+            lines.append(f"  {'─' * 58}")
             lines.append(
-                f"{i:<5} {p.player_name:<28} {p.team_abbr:<5} {opp:<9}"
-                f" {p.position:<4} {ha:<4} {p.score_prob:>5.1%}"
+                f"  {'#':<4} {'Player':<24} {'Team':<5} {'Pos':<4} {'H/A':<5} {'Prob':>5}"
             )
+            lines.append(f"  {'─' * 58}")
+            game_key = frozenset([home, away])
+            game_preds = [
+                p for p in predictions[:top_n]
+                if frozenset([p.team_abbr, p.opponent_abbr]) == game_key
+            ]
+            for p in game_preds:
+                ha_str = "HOME" if p.home_away == "H" else "AWAY"
+                lines.append(
+                    f"  {rank:<4} {p.player_name:<24} {p.team_abbr:<5}"
+                    f" {p.position:<4} {ha_str:<5} {p.score_prob:>5.1%}"
+                )
+                rank += 1
         return "\n".join(lines)
