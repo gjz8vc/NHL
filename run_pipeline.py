@@ -671,6 +671,8 @@ def main(argv: list[str] | None = None) -> int:
         )
         print("  " + "-" * 74)
         for i, r in enumerate(rows, 1):
+            if not r.get("last_game_date"):
+                continue
             display_name = name_map.get(r["full_name"], r["full_name"])
             print(
                 f"  {i:>3}  {display_name:<28} {r['team_abbr']:>5} {r['position']:>4}  "
