@@ -316,6 +316,8 @@ SELECT
     opp.shots_for          AS opp_shots_for,
     opp.pp_pct             AS opp_pp_pct,
     opp.pk_pct             AS opp_pk_pct,
+    opp.goals_allowed      AS opp_goals_allowed,
+    opp.shots_against      AS opp_shots_against,
     opp.faceoff_win_pct    AS opp_faceoff_win_pct,
 
     -- ── Opposing starting goalie (this game) ─────────────────────────────

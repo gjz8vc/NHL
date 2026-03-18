@@ -141,14 +141,16 @@ class TonightPredictor:
             ).fetchone()
         return dict(row) if row else {}
 
-    def _opp_pk_stats(self, opp_team: str) -> dict:
-        """Average opponent penalty kill % over last 5 games."""
+    def _opp_defensive_stats(self, opp_team: str) -> dict:
+        """Average opponent defensive stats over last 5 games."""
         with self._con() as con:
             row = con.execute(
                 """
-                SELECT AVG(pk_pct) AS opp_pk_pct
+                SELECT AVG(pk_pct)        AS opp_pk_pct,
+                       AVG(goals_allowed)  AS opp_goals_against_avg,
+                       AVG(shots_against)  AS opp_shots_against_avg
                 FROM  (
-                    SELECT pk_pct
+                    SELECT pk_pct, goals_allowed, shots_against
                     FROM   team_game_stats
                     WHERE  team_abbr = ?
                     ORDER  BY game_date DESC
@@ -187,7 +189,7 @@ class TonightPredictor:
     ) -> dict[str, Any]:
         rolling     = self._player_rolling(player["player_id"])
         team_ctx    = self._team_recent_stats(team_abbr)
-        opp_pk_ctx  = self._opp_pk_stats(opp_team)
+        opp_def_ctx = self._opp_defensive_stats(opp_team)
         goalie_ctx  = self._opp_goalie_rolling(opp_team)
 
         row: dict[str, Any] = {
@@ -217,8 +219,10 @@ class TonightPredictor:
         row["team_pp_pct"]          = team_ctx.get("team_pp_pct")          or FEATURE_DEFAULTS["team_pp_pct"]
         row["team_faceoff_win_pct"] = team_ctx.get("team_faceoff_win_pct") or FEATURE_DEFAULTS["team_faceoff_win_pct"]
 
-        # Opponent penalty kill
-        row["opp_pk_pct"] = opp_pk_ctx.get("opp_pk_pct") or FEATURE_DEFAULTS["opp_pk_pct"]
+        # Opponent defensive context
+        row["opp_pk_pct"] = opp_def_ctx.get("opp_pk_pct") or FEATURE_DEFAULTS["opp_pk_pct"]
+        row["opp_goals_against_avg"] = opp_def_ctx.get("opp_goals_against_avg") or FEATURE_DEFAULTS["opp_goals_against_avg"]
+        row["opp_shots_against_avg"] = opp_def_ctx.get("opp_shots_against_avg") or FEATURE_DEFAULTS["opp_shots_against_avg"]
 
         # Opponent goalie
         row["opp_goalie_recent_5g_save_pct"] = (
