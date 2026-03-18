@@ -13,7 +13,7 @@ Team context:
     team_shots_for, team_pp_pct, team_faceoff_win_pct
 
 Opponent context:
-    opp_goalie_recent_5g_save_pct, opp_goalie_recent_5g_gaa
+    opp_pk_pct, opp_goalie_recent_5g_save_pct, opp_goalie_recent_5g_gaa
 
 Situational:
     home_away (H=1, A=0)
@@ -55,6 +55,7 @@ NUMERIC_FEATURES = [
     "team_shots_for",
     "team_pp_pct",
     "team_faceoff_win_pct",
+    "opp_pk_pct",
     "opp_goalie_recent_5g_save_pct",
     "opp_goalie_recent_5g_gaa",
     "is_home",
@@ -78,6 +79,7 @@ FEATURE_DEFAULTS = {
     "team_shots_for": 30.0,
     "team_pp_pct": 20.0,
     "team_faceoff_win_pct": 50.0,
+    "opp_pk_pct": 80.0,
     "opp_goalie_recent_5g_save_pct": 0.910,
     "opp_goalie_recent_5g_gaa": 2.8,
     "is_home": 0.5,

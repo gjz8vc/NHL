@@ -141,6 +141,24 @@ class TonightPredictor:
             ).fetchone()
         return dict(row) if row else {}
 
+    def _opp_pk_stats(self, opp_team: str) -> dict:
+        """Average opponent penalty kill % over last 5 games."""
+        with self._con() as con:
+            row = con.execute(
+                """
+                SELECT AVG(pk_pct) AS opp_pk_pct
+                FROM  (
+                    SELECT pk_pct
+                    FROM   team_game_stats
+                    WHERE  team_abbr = ?
+                    ORDER  BY game_date DESC
+                    LIMIT  5
+                )
+                """,
+                (opp_team,),
+            ).fetchone()
+        return dict(row) if row else {}
+
     def _opp_goalie_rolling(self, opp_team: str) -> dict:
         """Most-recent rolling stats for the opponent's starting goalie."""
         with self._con() as con:
@@ -169,6 +187,7 @@ class TonightPredictor:
     ) -> dict[str, Any]:
         rolling     = self._player_rolling(player["player_id"])
         team_ctx    = self._team_recent_stats(team_abbr)
+        opp_pk_ctx  = self._opp_pk_stats(opp_team)
         goalie_ctx  = self._opp_goalie_rolling(opp_team)
 
         row: dict[str, Any] = {
@@ -197,6 +216,9 @@ class TonightPredictor:
         row["team_shots_for"]       = team_ctx.get("team_shots_for")       or FEATURE_DEFAULTS["team_shots_for"]
         row["team_pp_pct"]          = team_ctx.get("team_pp_pct")          or FEATURE_DEFAULTS["team_pp_pct"]
         row["team_faceoff_win_pct"] = team_ctx.get("team_faceoff_win_pct") or FEATURE_DEFAULTS["team_faceoff_win_pct"]
+
+        # Opponent penalty kill
+        row["opp_pk_pct"] = opp_pk_ctx.get("opp_pk_pct") or FEATURE_DEFAULTS["opp_pk_pct"]
 
         # Opponent goalie
         row["opp_goalie_recent_5g_save_pct"] = (
