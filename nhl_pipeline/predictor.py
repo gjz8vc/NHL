@@ -110,6 +110,7 @@ class TonightPredictor:
                 """
                 SELECT player_points_last5, player_points_last10,
                        player_shots_last5, player_TOI_last5,
+                       player_pp_toi_last5,
                        player_last5_games_played, player_last10_games_played
                 FROM   player_rolling_stats
                 WHERE  player_id = ?
@@ -186,6 +187,7 @@ class TonightPredictor:
             ("player_points_last10",      FEATURE_DEFAULTS["player_points_last10"]),
             ("player_shots_last5",        FEATURE_DEFAULTS["player_shots_last5"]),
             ("player_TOI_last5",          FEATURE_DEFAULTS["player_TOI_last5"]),
+            ("player_pp_toi_last5",       FEATURE_DEFAULTS["player_pp_toi_last5"]),
             ("player_last5_games_played", FEATURE_DEFAULTS["player_last5_games_played"]),
             ("player_last10_games_played",FEATURE_DEFAULTS["player_last10_games_played"]),
         ]:

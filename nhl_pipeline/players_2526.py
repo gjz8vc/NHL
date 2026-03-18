@@ -423,6 +423,26 @@ def get_players_for_teams(teams: list[str]) -> list[dict[str, Any]]:
     return [p for p in PLAYERS_2526 if p["team"] in team_set]
 
 
+def _estimate_pp_toi(player: dict[str, Any]) -> float:
+    """Estimate average PP TOI (seconds) from a player's scoring rate and position.
+
+    Heuristic based on typical NHL PP deployment:
+      - Elite scorers (ppg >= 0.50): PP1 unit, ~200-240s (3.3-4 min)
+      - Good scorers  (ppg >= 0.30): PP1/PP2 mix, ~120-200s (2-3.3 min)
+      - Depth players  (ppg < 0.30): PP2 or no PP, ~30-90s (0.5-1.5 min)
+    Defensemen get a slight bump since they play the point on PP.
+    """
+    ppg = player.get("ppg", 0.2)
+    is_d = player.get("pos") == "D"
+    if ppg >= 0.50:
+        base = 220.0
+    elif ppg >= 0.30:
+        base = 140.0
+    else:
+        base = 50.0
+    return base + (20.0 if is_d else 0.0)
+
+
 def build_feature_rows(
     matchups: list[tuple[str, str]],
     season: str = "20252026",
@@ -468,6 +488,7 @@ def build_feature_rows(
                 "player_points_last10":       ppg,
                 "player_shots_last5":         player["spg"],
                 "player_TOI_last5":           player["toi"],
+                "player_pp_toi_last5":        player.get("pp_toi", _estimate_pp_toi(player)),
                 "player_last5_games_played":  5,
                 "player_last10_games_played": 10,
                 # team context
