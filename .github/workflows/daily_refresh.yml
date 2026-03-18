@@ -5,22 +5,6 @@ on:
     # Runs at 11:00 AM UTC (after most NHL games finish ~6 AM UTC)
     - cron: '0 11 * * *'
   workflow_dispatch:
-    inputs:
-      full_backfill:
-        description: 'Run full season backfill instead of daily'
-        required: false
-        type: boolean
-        default: false
-      backfill_start:
-        description: 'Backfill start date (YYYY-MM-DD), only used if full_backfill is true'
-        required: false
-        type: string
-        default: '2025-10-04'
-      backfill_end:
-        description: 'Backfill end date (YYYY-MM-DD), only used if full_backfill is true'
-        required: false
-        type: string
-        default: ''
 
 permissions:
   contents: write
@@ -58,15 +42,11 @@ jobs:
       - name: "Step 1/5: Fetch schedule and rosters"
         run: python run_pipeline.py daily
 
-      - name: "Step 2/5: Backfill schedules (if requested)"
-        if: ${{ github.event.inputs.full_backfill == 'true' }}
+      - name: "Step 2/5: Backfill full season schedules"
         run: |
-          END_DATE="${{ github.event.inputs.backfill_end }}"
-          if [ -z "$END_DATE" ]; then
-            END_DATE=$(date -u +%Y-%m-%d)
-          fi
+          END_DATE=$(date -u +%Y-%m-%d)
           python run_pipeline.py backfill \
-            --start "${{ github.event.inputs.backfill_start }}" \
+            --start "2025-10-04" \
             --end "$END_DATE" \
             --rosters
 
