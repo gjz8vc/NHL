@@ -518,9 +518,10 @@ def build_feature_rows(
                 "player_last5_games_played":  5,
                 "player_last10_games_played": 10,
                 "player_es_points_pct_last5": 0.5,
-                # schedule & head-to-head
+                # schedule, head-to-head, and venue split
                 "days_rest":              2,
                 "h2h_points_per_game":    ppg,  # use season avg as proxy
+                "player_home_away_ppg":   ppg,  # use season avg as proxy
                 # team context
                 "team_shots_for":        t_shots,
                 "team_pp_pct":           t_pp,
@@ -529,6 +530,8 @@ def build_feature_rows(
                 "opp_pk_pct":                    opp_pk,
                 "opp_goals_against_avg":         opp_ga,
                 "opp_shots_against_avg":         opp_sa,
+                "opp_goals_against_venue":       opp_ga,  # use overall as proxy
+                "opp_one_goal_game_pct":         0.4,
                 # opponent goalie
                 "opp_goalie_recent_5g_save_pct": opp_sv,
                 "opp_goalie_recent_5g_gaa":      opp_gaa,

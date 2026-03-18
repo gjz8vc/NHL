@@ -384,6 +384,42 @@ SELECT
      LIMIT  10
     ) AS h2h_points_per_game,
 
+    -- ── Player home/away scoring split (avg points in last 10 same-venue games) ──
+    (SELECT ROUND(AVG(COALESCE(ha.points, 0)), 3)
+     FROM   player_game_logs ha
+     WHERE  ha.player_id = pgl.player_id
+       AND  ha.home_away = pgl.home_away
+       AND  ha.game_date < pgl.game_date
+     ORDER  BY ha.game_date DESC
+     LIMIT  10
+    ) AS player_home_away_ppg,
+
+    -- ── Opponent goals allowed in same venue context (last 5 home or away games) ──
+    (SELECT ROUND(AVG(COALESCE(ov.goals_allowed, 0)), 2)
+     FROM   (
+         SELECT goals_allowed
+         FROM   team_game_stats ov2
+         WHERE  ov2.team_abbr = pgl.opponent_abbr
+           AND  ov2.home_away = CASE WHEN pgl.home_away = 'H' THEN 'A' ELSE 'H' END
+           AND  ov2.game_date < pgl.game_date
+         ORDER  BY ov2.game_date DESC
+         LIMIT  5
+     ) ov
+    ) AS opp_goals_against_venue,
+
+    -- ── Opponent one-goal game tendency (pct of last 10 games decided by 1 goal) ──
+    (SELECT ROUND(1.0 * SUM(CASE WHEN ABS(og.goals - og.goals_allowed) <= 1 THEN 1 ELSE 0 END)
+            / COUNT(*), 3)
+     FROM   (
+         SELECT goals, goals_allowed
+         FROM   team_game_stats og2
+         WHERE  og2.team_abbr = pgl.opponent_abbr
+           AND  og2.game_date < pgl.game_date
+         ORDER  BY og2.game_date DESC
+         LIMIT  10
+     ) og
+    ) AS opp_one_goal_game_pct,
+
     -- ── Binary target ─────────────────────────────────────────────────────
     CASE
         WHEN (COALESCE(pgl.goals, 0) + COALESCE(pgl.assists, 0)) >= 1 THEN 1

@@ -16,11 +16,15 @@ Schedule context:
 Head-to-head:
     h2h_points_per_game
 
+Player situational:
+    player_home_away_ppg
+
 Team context:
     team_shots_for, team_pp_pct, team_faceoff_win_pct
 
 Opponent context:
     opp_pk_pct, opp_goals_against_avg, opp_shots_against_avg,
+    opp_goals_against_venue, opp_one_goal_game_pct,
     opp_goalie_recent_5g_save_pct, opp_goalie_recent_5g_gaa
 
 Situational:
@@ -63,12 +67,15 @@ NUMERIC_FEATURES = [
     "player_es_points_pct_last5",
     "days_rest",
     "h2h_points_per_game",
+    "player_home_away_ppg",
     "team_shots_for",
     "team_pp_pct",
     "team_faceoff_win_pct",
     "opp_pk_pct",
     "opp_goals_against_avg",
     "opp_shots_against_avg",
+    "opp_goals_against_venue",
+    "opp_one_goal_game_pct",
     "opp_goalie_recent_5g_save_pct",
     "opp_goalie_recent_5g_gaa",
     "is_home",
@@ -92,12 +99,15 @@ FEATURE_DEFAULTS = {
     "player_es_points_pct_last5": 0.5,
     "days_rest": 2.0,
     "h2h_points_per_game": 0.3,
+    "player_home_away_ppg": 0.3,
     "team_shots_for": 30.0,
     "team_pp_pct": 20.0,
     "team_faceoff_win_pct": 50.0,
     "opp_pk_pct": 80.0,
     "opp_goals_against_avg": 2.8,
     "opp_shots_against_avg": 30.0,
+    "opp_goals_against_venue": 2.8,
+    "opp_one_goal_game_pct": 0.4,
     "opp_goalie_recent_5g_save_pct": 0.910,
     "opp_goalie_recent_5g_gaa": 2.8,
     "is_home": 0.5,
