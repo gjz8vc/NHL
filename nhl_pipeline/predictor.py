@@ -111,7 +111,8 @@ class TonightPredictor:
                 SELECT player_points_last5, player_points_last10,
                        player_shots_last5, player_TOI_last5,
                        player_pp_toi_last5,
-                       player_last5_games_played, player_last10_games_played
+                       player_last5_games_played, player_last10_games_played,
+                       player_es_points_pct_last5
                 FROM   player_rolling_stats
                 WHERE  player_id = ?
                 ORDER  BY game_date DESC
@@ -120,6 +121,42 @@ class TonightPredictor:
                 (player_id,),
             ).fetchone()
         return dict(row) if row else {}
+
+    def _days_rest(self, player_id: int, game_date: str) -> int:
+        """Days since the player's most recent game before game_date."""
+        with self._con() as con:
+            row = con.execute(
+                """
+                SELECT MAX(game_date) AS last_game
+                FROM   player_game_logs
+                WHERE  player_id = ? AND game_date < ?
+                """,
+                (player_id, game_date),
+            ).fetchone()
+        if row and row["last_game"]:
+            from datetime import datetime
+            last = datetime.strptime(row["last_game"], "%Y-%m-%d")
+            curr = datetime.strptime(game_date, "%Y-%m-%d")
+            return (curr - last).days
+        return 2  # default
+
+    def _h2h_history(self, player_id: int, opponent: str, game_date: str) -> float:
+        """Average points per game vs this opponent (last 10 meetings)."""
+        with self._con() as con:
+            row = con.execute(
+                """
+                SELECT AVG(COALESCE(points, 0)) AS h2h_ppg
+                FROM  (
+                    SELECT points
+                    FROM   player_game_logs
+                    WHERE  player_id = ? AND opponent_abbr = ? AND game_date < ?
+                    ORDER  BY game_date DESC
+                    LIMIT  10
+                )
+                """,
+                (player_id, opponent, game_date),
+            ).fetchone()
+        return row["h2h_ppg"] if row and row["h2h_ppg"] else 0.3
 
     def _team_recent_stats(self, team_abbr: str) -> dict:
         """Average team context over last 5 games."""
@@ -211,8 +248,13 @@ class TonightPredictor:
             ("player_pp_toi_last5",       FEATURE_DEFAULTS["player_pp_toi_last5"]),
             ("player_last5_games_played", FEATURE_DEFAULTS["player_last5_games_played"]),
             ("player_last10_games_played",FEATURE_DEFAULTS["player_last10_games_played"]),
+            ("player_es_points_pct_last5",FEATURE_DEFAULTS["player_es_points_pct_last5"]),
         ]:
             row[feat] = rolling.get(feat) or default
+
+        # Days rest and head-to-head
+        row["days_rest"] = self._days_rest(player["player_id"], game_date)
+        row["h2h_points_per_game"] = self._h2h_history(player["player_id"], opp_team, game_date)
 
         # Team context
         row["team_shots_for"]       = team_ctx.get("team_shots_for")       or FEATURE_DEFAULTS["team_shots_for"]

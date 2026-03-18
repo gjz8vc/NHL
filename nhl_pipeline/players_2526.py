@@ -517,6 +517,10 @@ def build_feature_rows(
                 "player_pp_toi_last5":        player.get("pp_toi", _estimate_pp_toi(player)),
                 "player_last5_games_played":  5,
                 "player_last10_games_played": 10,
+                "player_es_points_pct_last5": 0.5,
+                # schedule & head-to-head
+                "days_rest":              2,
+                "h2h_points_per_game":    ppg,  # use season avg as proxy
                 # team context
                 "team_shots_for":        t_shots,
                 "team_pp_pct":           t_pp,

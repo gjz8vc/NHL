@@ -7,7 +7,14 @@ Features used
 -------------
 Player form (rolling):
     player_points_last5, player_points_last10, player_shots_last5,
-    player_TOI_last5, player_pp_toi_last5, player_last5_games_played
+    player_TOI_last5, player_pp_toi_last5, player_last5_games_played,
+    player_es_points_pct_last5
+
+Schedule context:
+    days_rest
+
+Head-to-head:
+    h2h_points_per_game
 
 Team context:
     team_shots_for, team_pp_pct, team_faceoff_win_pct
@@ -53,6 +60,9 @@ NUMERIC_FEATURES = [
     "player_pp_toi_last5",
     "player_last5_games_played",
     "player_last10_games_played",
+    "player_es_points_pct_last5",
+    "days_rest",
+    "h2h_points_per_game",
     "team_shots_for",
     "team_pp_pct",
     "team_faceoff_win_pct",
@@ -79,6 +89,9 @@ FEATURE_DEFAULTS = {
     "player_pp_toi_last5": 120.0,  # ~2 min PP time
     "player_last5_games_played": 5.0,
     "player_last10_games_played": 10.0,
+    "player_es_points_pct_last5": 0.5,
+    "days_rest": 2.0,
+    "h2h_points_per_game": 0.3,
     "team_shots_for": 30.0,
     "team_pp_pct": 20.0,
     "team_faceoff_win_pct": 50.0,

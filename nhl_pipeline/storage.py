@@ -228,6 +228,27 @@ SELECT
         ORDER BY game_date
         ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
     ) AS player_last5_games_played,
+    -- Even-strength points as fraction of total points (last 5 games)
+    ROUND(
+        CASE WHEN SUM(COALESCE(points, 0)) OVER (
+                PARTITION BY player_id ORDER BY game_date
+                ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+             ) > 0
+             THEN 1.0 * (
+                SUM(COALESCE(points, 0)) OVER (
+                    PARTITION BY player_id ORDER BY game_date
+                    ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+                ) - SUM(COALESCE(power_play_points, 0)) OVER (
+                    PARTITION BY player_id ORDER BY game_date
+                    ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+                )
+             ) / SUM(COALESCE(points, 0)) OVER (
+                PARTITION BY player_id ORDER BY game_date
+                ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+             )
+             ELSE 0.5
+        END
+    , 3) AS player_es_points_pct_last5,
     -- Rolling averages over up to 10 preceding games
     ROUND(AVG(COALESCE(points, 0)) OVER (
         PARTITION BY player_id
@@ -341,6 +362,27 @@ SELECT
     prs.player_pp_toi_last5,
     prs.player_last5_games_played,
     prs.player_last10_games_played,
+    prs.player_es_points_pct_last5,
+
+    -- ── Days rest (days since this player's previous game) ───────────────
+    CAST(
+        JULIANDAY(pgl.game_date) - JULIANDAY(
+            (SELECT MAX(prev.game_date)
+             FROM   player_game_logs prev
+             WHERE  prev.player_id = pgl.player_id
+               AND  prev.game_date < pgl.game_date)
+        ) AS INTEGER
+    ) AS days_rest,
+
+    -- ── Head-to-head history (avg points vs this opponent, last 10 meetings) ──
+    (SELECT ROUND(AVG(COALESCE(h2h.points, 0)), 3)
+     FROM   player_game_logs h2h
+     WHERE  h2h.player_id    = pgl.player_id
+       AND  h2h.opponent_abbr = pgl.opponent_abbr
+       AND  h2h.game_date    < pgl.game_date
+     ORDER  BY h2h.game_date DESC
+     LIMIT  10
+    ) AS h2h_points_per_game,
 
     -- ── Binary target ─────────────────────────────────────────────────────
     CASE
