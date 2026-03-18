@@ -1,0 +1,62 @@
+name: NHL Daily Refresh
+
+on:
+  schedule:
+    # Runs at 8:00 AM UTC every day during NHL season (Oct–Jun)
+    - cron: '0 8 * * *'
+  workflow_dispatch:
+    # Allows you to manually trigger from the GitHub Actions tab
+
+jobs:
+  daily-refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create data directory
+        run: mkdir -p data
+
+      - name: Download previous model & DB (if any)
+        uses: actions/download-artifact@v4
+        with:
+          name: nhl-pipeline-data
+          path: data/
+        continue-on-error: true  # first run won't have artifacts yet
+
+      - name: "Step 1/4: Fetch schedule and rosters"
+        run: python run_pipeline.py daily
+        continue-on-error: true
+
+      - name: "Step 2/4: Fetch player game logs"
+        run: python run_pipeline.py gamelogs
+        continue-on-error: true
+
+      - name: "Step 3/4: Fetch team and goalie stats"
+        run: python run_pipeline.py gamestats --season
+        continue-on-error: true
+
+      - name: "Step 4/4: Retrain model"
+        run: python run_pipeline.py train --model data/model.pkl
+        continue-on-error: true
+
+      - name: Upload pipeline data
+        uses: actions/upload-artifact@v4
+        with:
+          name: nhl-pipeline-data
+          path: |
+            data/*.db
+            data/*.pkl
+          retention-days: 90
+          overwrite: true
