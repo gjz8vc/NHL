@@ -7,7 +7,7 @@ Features used
 -------------
 Player form (rolling):
     player_points_last5, player_points_last10, player_shots_last5,
-    player_TOI_last5, player_last5_games_played
+    player_TOI_last5, player_pp_toi_last5, player_last5_games_played
 
 Team context:
     team_shots_for, team_pp_pct, team_faceoff_win_pct
@@ -49,6 +49,7 @@ NUMERIC_FEATURES = [
     "player_points_last10",
     "player_shots_last5",
     "player_TOI_last5",
+    "player_pp_toi_last5",
     "player_last5_games_played",
     "player_last10_games_played",
     "team_shots_for",
@@ -71,6 +72,7 @@ FEATURE_DEFAULTS = {
     "player_points_last10": 0.3,
     "player_shots_last5": 2.2,
     "player_TOI_last5": 900.0,   # ~15 min
+    "player_pp_toi_last5": 120.0,  # ~2 min PP time
     "player_last5_games_played": 5.0,
     "player_last10_games_played": 10.0,
     "team_shots_for": 30.0,
@@ -127,7 +129,7 @@ class PointScoringModel:
     >>> model = PointScoringModel.load("data/model.pkl")
     """
 
-    VERSION = "1.0"
+    VERSION = "1.1"
 
     def __init__(self) -> None:
         self._pipeline: Pipeline | None = None

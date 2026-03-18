@@ -218,6 +218,11 @@ SELECT
         ORDER BY game_date
         ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
     ), 1) AS player_TOI_last5,
+    ROUND(AVG(COALESCE(power_play_toi_seconds, 0)) OVER (
+        PARTITION BY player_id
+        ORDER BY game_date
+        ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+    ), 1) AS player_pp_toi_last5,
     COUNT(*) OVER (
         PARTITION BY player_id
         ORDER BY game_date
@@ -331,6 +336,7 @@ SELECT
     prs.player_points_last10,
     prs.player_shots_last5,
     prs.player_TOI_last5,
+    prs.player_pp_toi_last5,
     prs.player_last5_games_played,
     prs.player_last10_games_played,
 
