@@ -313,6 +313,24 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Map DB placeholder names to real 2025-26 player names",
     )
 
+    # ---- streak-tiers -------------------------------------------------
+    p_stiers = sub.add_parser(
+        "streak-tiers",
+        help="Show point streaks across all tiers (3, 5, 7, 9+ games)",
+    )
+    p_stiers.add_argument(
+        "--date", metavar="YYYY-MM-DD", default=None,
+        help="Check streaks as of this date (default: most recent data in DB)",
+    )
+    p_stiers.add_argument(
+        "--tonight", action="store_true",
+        help="Only show players who are playing tonight",
+    )
+    p_stiers.add_argument(
+        "--real-players", dest="real_players", action="store_true",
+        help="Map DB placeholder names to real 2025-26 player names",
+    )
+
     return parser
 
 
@@ -679,6 +697,59 @@ def main(argv: list[str] | None = None) -> int:
                 f"{r['streak_length']:>6}  {r['streak_start']:>12}  {r['last_game_date']:>12}"
             )
         print(f"\n  {len(rows)} player(s) on {args.min_streak}+ game point streaks")
+        return 0
+
+    # ------------------------------------------------------------------
+    elif args.command == "streak-tiers":
+        from datetime import datetime, timezone
+
+        as_of = args.date
+        tiers = [9, 7, 5, 3]
+
+        # Fetch all streaks at the lowest tier (3), then filter per tier
+        all_rows = pipeline.point_streaks(min_streak=3, as_of_date=as_of)
+
+        # Optional: filter to tonight's players
+        if args.tonight:
+            game_date = as_of or datetime.now(timezone.utc).strftime("%Y-%m-%d")
+            tonight_games = pipeline.games_on(game_date)
+            tonight_teams = {
+                t
+                for g in tonight_games
+                for t in (g["home_team_abbr"], g["away_team_abbr"])
+            }
+            all_rows = [r for r in all_rows if r["team_abbr"] in tonight_teams]
+
+        if not all_rows:
+            print("No players found on a 3+ game point streak.")
+            return 0
+
+        name_map = _build_real_name_map() if args.real_players else {}
+
+        date_label = f" as of {as_of}" if as_of else ""
+        tonight_label = " (tonight only)" if args.tonight else ""
+        header_fmt = f"  {'#':>3}  {'Player':<28} {'Team':>5} {'Pos':>4}  {'Streak':>6}  {'Streak Start':>12}  {'Last Game':>12}"
+        sep = "  " + "-" * 74
+
+        for tier in tiers:
+            tier_rows = [r for r in all_rows if r["streak_length"] >= tier]
+            print(f"\n{'='*78}")
+            print(f"  {tier}+ GAME POINT STREAKS{date_label}{tonight_label}")
+            print(f"{'='*78}")
+            if not tier_rows:
+                print("  No players on this tier.\n")
+                continue
+            print(header_fmt)
+            print(sep)
+            for i, r in enumerate(tier_rows, 1):
+                if not r.get("last_game_date"):
+                    continue
+                display_name = name_map.get(r["full_name"], r["full_name"])
+                print(
+                    f"  {i:>3}  {display_name:<28} {r['team_abbr']:>5} {r['position']:>4}  "
+                    f"{r['streak_length']:>6}  {r['streak_start']:>12}  {r['last_game_date']:>12}"
+                )
+            print(f"  {len(tier_rows)} player(s)\n")
         return 0
 
     return 0

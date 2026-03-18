@@ -228,6 +228,27 @@ SELECT
         ORDER BY game_date
         ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
     ) AS player_last5_games_played,
+    -- Even-strength points as fraction of total points (last 5 games)
+    ROUND(
+        CASE WHEN SUM(COALESCE(points, 0)) OVER (
+                PARTITION BY player_id ORDER BY game_date
+                ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+             ) > 0
+             THEN 1.0 * (
+                SUM(COALESCE(points, 0)) OVER (
+                    PARTITION BY player_id ORDER BY game_date
+                    ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+                ) - SUM(COALESCE(power_play_points, 0)) OVER (
+                    PARTITION BY player_id ORDER BY game_date
+                    ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+                )
+             ) / SUM(COALESCE(points, 0)) OVER (
+                PARTITION BY player_id ORDER BY game_date
+                ROWS BETWEEN 5 PRECEDING AND 1 PRECEDING
+             )
+             ELSE 0.5
+        END
+    , 3) AS player_es_points_pct_last5,
     -- Rolling averages over up to 10 preceding games
     ROUND(AVG(COALESCE(points, 0)) OVER (
         PARTITION BY player_id
@@ -316,6 +337,8 @@ SELECT
     opp.shots_for          AS opp_shots_for,
     opp.pp_pct             AS opp_pp_pct,
     opp.pk_pct             AS opp_pk_pct,
+    opp.goals_allowed      AS opp_goals_allowed,
+    opp.shots_against      AS opp_shots_against,
     opp.faceoff_win_pct    AS opp_faceoff_win_pct,
 
     -- ── Opposing starting goalie (this game) ─────────────────────────────
@@ -339,6 +362,87 @@ SELECT
     prs.player_pp_toi_last5,
     prs.player_last5_games_played,
     prs.player_last10_games_played,
+    prs.player_es_points_pct_last5,
+
+    -- ── Days rest (days since this player's previous game) ───────────────
+    CAST(
+        JULIANDAY(pgl.game_date) - JULIANDAY(
+            (SELECT MAX(prev.game_date)
+             FROM   player_game_logs prev
+             WHERE  prev.player_id = pgl.player_id
+               AND  prev.game_date < pgl.game_date)
+        ) AS INTEGER
+    ) AS days_rest,
+
+    -- ── Head-to-head history (avg points vs this opponent, last 10 meetings) ──
+    (SELECT ROUND(AVG(COALESCE(h2h.points, 0)), 3)
+     FROM   player_game_logs h2h
+     WHERE  h2h.player_id    = pgl.player_id
+       AND  h2h.opponent_abbr = pgl.opponent_abbr
+       AND  h2h.game_date    < pgl.game_date
+     ORDER  BY h2h.game_date DESC
+     LIMIT  10
+    ) AS h2h_points_per_game,
+
+    -- ── Player home/away scoring split (avg points in last 10 same-venue games) ──
+    (SELECT ROUND(AVG(COALESCE(ha.points, 0)), 3)
+     FROM   player_game_logs ha
+     WHERE  ha.player_id = pgl.player_id
+       AND  ha.home_away = pgl.home_away
+       AND  ha.game_date < pgl.game_date
+     ORDER  BY ha.game_date DESC
+     LIMIT  10
+    ) AS player_home_away_ppg,
+
+    -- ── Opponent goals allowed in same venue context (last 5 home or away games) ──
+    (SELECT ROUND(AVG(COALESCE(ov.goals_allowed, 0)), 2)
+     FROM   (
+         SELECT goals_allowed
+         FROM   team_game_stats ov2
+         WHERE  ov2.team_abbr = pgl.opponent_abbr
+           AND  ov2.home_away = CASE WHEN pgl.home_away = 'H' THEN 'A' ELSE 'H' END
+           AND  ov2.game_date < pgl.game_date
+         ORDER  BY ov2.game_date DESC
+         LIMIT  5
+     ) ov
+    ) AS opp_goals_against_venue,
+
+    -- ── Opponent one-goal game tendency (pct of last 10 games decided by 1 goal) ──
+    (SELECT ROUND(1.0 * SUM(CASE WHEN ABS(og.goals - og.goals_allowed) <= 1 THEN 1 ELSE 0 END)
+            / COUNT(*), 3)
+     FROM   (
+         SELECT goals, goals_allowed
+         FROM   team_game_stats og2
+         WHERE  og2.team_abbr = pgl.opponent_abbr
+           AND  og2.game_date < pgl.game_date
+         ORDER  BY og2.game_date DESC
+         LIMIT  10
+     ) og
+    ) AS opp_one_goal_game_pct,
+
+    -- ── Schedule fatigue (games played in the 7 days before this game) ────
+    (SELECT COUNT(*)
+     FROM   player_game_logs sf
+     WHERE  sf.player_id = pgl.player_id
+       AND  sf.game_date < pgl.game_date
+       AND  sf.game_date >= DATE(pgl.game_date, '-7 days')
+    ) AS games_last_7_days,
+
+    -- ── Games since last point (cold streak detector) ─────────────────────
+    COALESCE(
+        (SELECT MIN(streak_cnt)
+         FROM   (
+             SELECT ROW_NUMBER() OVER (ORDER BY gslp.game_date DESC) AS streak_cnt,
+                    gslp.points
+             FROM   player_game_logs gslp
+             WHERE  gslp.player_id = pgl.player_id
+               AND  gslp.game_date < pgl.game_date
+             ORDER  BY gslp.game_date DESC
+         )
+         WHERE points >= 1
+        ),
+        5
+    ) AS games_since_last_point,
 
     -- ── Binary target ─────────────────────────────────────────────────────
     CASE

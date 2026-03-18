@@ -108,6 +108,31 @@ TEAM_STATS: dict[str, tuple[float, float, float]] = {
 }
 
 # ---------------------------------------------------------------------------
+# Opponent defensive stats  (team → (pk_pct, goals_against_avg, shots_against_avg))
+# A lower PK% means the opponent is worse at killing penalties.
+# Higher goals/shots against means a leakier defense.
+# ---------------------------------------------------------------------------
+DEFENSIVE_STATS: dict[str, tuple[float, float, float]] = {
+    "BOS": (81.0, 2.5, 28.0), "BUF": (76.0, 3.2, 32.0),
+    "DET": (78.0, 3.0, 31.0), "FLA": (82.0, 2.4, 27.5),
+    "MTL": (76.5, 3.3, 32.5), "OTT": (79.0, 2.9, 30.5),
+    "TBL": (80.0, 2.7, 29.5), "TOR": (79.5, 2.8, 30.0),
+    "CAR": (83.0, 2.3, 27.0), "CBJ": (74.0, 3.5, 33.0),
+    "NJD": (78.5, 2.9, 30.5), "NYI": (79.0, 2.8, 30.0),
+    "NYR": (81.5, 2.5, 28.5), "PHI": (77.0, 3.1, 31.5),
+    "PIT": (78.0, 3.0, 31.0), "WSH": (80.5, 2.6, 29.0),
+    "ARI": (72.0, 3.8, 34.0), "CHI": (73.0, 3.6, 33.5),
+    "COL": (80.0, 2.7, 29.0), "DAL": (82.5, 2.4, 27.5),
+    "MIN": (81.0, 2.5, 28.5), "NSH": (77.5, 3.0, 31.0),
+    "STL": (78.0, 3.0, 31.0), "UTA": (78.5, 2.9, 30.5),
+    "WPG": (82.0, 2.4, 28.0), "ANA": (75.0, 3.3, 32.5),
+    "CGY": (79.0, 2.8, 30.0), "EDM": (79.5, 2.8, 29.5),
+    "LAK": (80.5, 2.6, 29.0), "MDA": (77.5, 3.1, 31.5),
+    "SJS": (73.5, 3.7, 34.0), "SEA": (79.0, 2.9, 30.5),
+    "VAN": (78.0, 3.0, 30.5), "VGK": (81.0, 2.5, 28.5),
+}
+
+# ---------------------------------------------------------------------------
 # Player database
 # (player_id, name, team, position, pts_per_game, shots_per_game, toi_seconds)
 # ---------------------------------------------------------------------------
@@ -472,6 +497,7 @@ def build_feature_rows(
             home_away = "H"        if team == home_team else "A"
 
             t_shots, t_pp, t_fo = TEAM_STATS.get(team, (29.0, 19.0, 50.0))
+            opp_pk, opp_ga, opp_sa = DEFENSIVE_STATS.get(opp, (80.0, 2.8, 30.0))
             opp_sv, opp_gaa     = GOALIE_STATS.get(opp,  (0.906, 2.8))
 
             ppg  = player["ppg"]
@@ -491,10 +517,24 @@ def build_feature_rows(
                 "player_pp_toi_last5":        player.get("pp_toi", _estimate_pp_toi(player)),
                 "player_last5_games_played":  5,
                 "player_last10_games_played": 10,
+                "player_es_points_pct_last5": 0.5,
+                # schedule, head-to-head, venue split, and situational
+                "days_rest":              2,
+                "games_last_7_days":      3,
+                "h2h_points_per_game":    ppg,  # use season avg as proxy
+                "player_home_away_ppg":   ppg,  # use season avg as proxy
+                "games_since_last_point": 2,
+                "travel_distance":        0.0 if home_away == "H" else 500.0,
                 # team context
                 "team_shots_for":        t_shots,
                 "team_pp_pct":           t_pp,
                 "team_faceoff_win_pct":  t_fo,
+                # opponent defensive context
+                "opp_pk_pct":                    opp_pk,
+                "opp_goals_against_avg":         opp_ga,
+                "opp_shots_against_avg":         opp_sa,
+                "opp_goals_against_venue":       opp_ga,  # use overall as proxy
+                "opp_one_goal_game_pct":         0.4,
                 # opponent goalie
                 "opp_goalie_recent_5g_save_pct": opp_sv,
                 "opp_goalie_recent_5g_gaa":      opp_gaa,

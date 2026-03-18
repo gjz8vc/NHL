@@ -111,7 +111,8 @@ class TonightPredictor:
                 SELECT player_points_last5, player_points_last10,
                        player_shots_last5, player_TOI_last5,
                        player_pp_toi_last5,
-                       player_last5_games_played, player_last10_games_played
+                       player_last5_games_played, player_last10_games_played,
+                       player_es_points_pct_last5
                 FROM   player_rolling_stats
                 WHERE  player_id = ?
                 ORDER  BY game_date DESC
@@ -120,6 +121,137 @@ class TonightPredictor:
                 (player_id,),
             ).fetchone()
         return dict(row) if row else {}
+
+    def _days_rest(self, player_id: int, game_date: str) -> int:
+        """Days since the player's most recent game before game_date."""
+        with self._con() as con:
+            row = con.execute(
+                """
+                SELECT MAX(game_date) AS last_game
+                FROM   player_game_logs
+                WHERE  player_id = ? AND game_date < ?
+                """,
+                (player_id, game_date),
+            ).fetchone()
+        if row and row["last_game"]:
+            from datetime import datetime
+            last = datetime.strptime(row["last_game"], "%Y-%m-%d")
+            curr = datetime.strptime(game_date, "%Y-%m-%d")
+            return (curr - last).days
+        return 2  # default
+
+    def _h2h_history(self, player_id: int, opponent: str, game_date: str) -> float:
+        """Average points per game vs this opponent (last 10 meetings)."""
+        with self._con() as con:
+            row = con.execute(
+                """
+                SELECT AVG(COALESCE(points, 0)) AS h2h_ppg
+                FROM  (
+                    SELECT points
+                    FROM   player_game_logs
+                    WHERE  player_id = ? AND opponent_abbr = ? AND game_date < ?
+                    ORDER  BY game_date DESC
+                    LIMIT  10
+                )
+                """,
+                (player_id, opponent, game_date),
+            ).fetchone()
+        return row["h2h_ppg"] if row and row["h2h_ppg"] else 0.3
+
+    def _player_home_away_ppg(self, player_id: int, home_away: str, game_date: str) -> float:
+        """Player's avg points in last 10 games at the same venue type (H or A)."""
+        with self._con() as con:
+            row = con.execute(
+                """
+                SELECT AVG(COALESCE(points, 0)) AS ppg
+                FROM  (
+                    SELECT points
+                    FROM   player_game_logs
+                    WHERE  player_id = ? AND home_away = ? AND game_date < ?
+                    ORDER  BY game_date DESC
+                    LIMIT  10
+                )
+                """,
+                (player_id, home_away, game_date),
+            ).fetchone()
+        return row["ppg"] if row and row["ppg"] else 0.3
+
+    def _opp_goals_against_venue(self, opp_team: str, home_away: str, game_date: str) -> float:
+        """Opponent's avg goals allowed in their last 5 games at the relevant venue.
+
+        If the player is Home, the opponent is Away, so we look at the opponent's
+        away games (and vice versa).
+        """
+        opp_venue = "A" if home_away == "H" else "H"
+        with self._con() as con:
+            row = con.execute(
+                """
+                SELECT AVG(COALESCE(goals_allowed, 0)) AS ga
+                FROM  (
+                    SELECT goals_allowed
+                    FROM   team_game_stats
+                    WHERE  team_abbr = ? AND home_away = ? AND game_date < ?
+                    ORDER  BY game_date DESC
+                    LIMIT  5
+                )
+                """,
+                (opp_team, opp_venue, game_date),
+            ).fetchone()
+        return row["ga"] if row and row["ga"] else 2.8
+
+    def _opp_one_goal_game_pct(self, opp_team: str, game_date: str) -> float:
+        """Fraction of opponent's last 10 games decided by 1 goal or less."""
+        with self._con() as con:
+            row = con.execute(
+                """
+                SELECT ROUND(1.0 * SUM(CASE WHEN ABS(goals - goals_allowed) <= 1 THEN 1 ELSE 0 END)
+                       / COUNT(*), 3) AS pct
+                FROM  (
+                    SELECT goals, goals_allowed
+                    FROM   team_game_stats
+                    WHERE  team_abbr = ? AND game_date < ?
+                    ORDER  BY game_date DESC
+                    LIMIT  10
+                )
+                """,
+                (opp_team, game_date),
+            ).fetchone()
+        return row["pct"] if row and row["pct"] else 0.4
+
+    def _games_last_7_days(self, player_id: int, game_date: str) -> int:
+        """Number of games the player played in the 7 days before game_date."""
+        with self._con() as con:
+            row = con.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM   player_game_logs
+                WHERE  player_id = ?
+                  AND  game_date < ?
+                  AND  game_date >= DATE(?, '-7 days')
+                """,
+                (player_id, game_date, game_date),
+            ).fetchone()
+        return row["cnt"] if row else 3
+
+    def _games_since_last_point(self, player_id: int, game_date: str) -> int:
+        """Number of consecutive pointless games before game_date."""
+        with self._con() as con:
+            rows = con.execute(
+                """
+                SELECT points
+                FROM   player_game_logs
+                WHERE  player_id = ? AND game_date < ?
+                ORDER  BY game_date DESC
+                LIMIT  20
+                """,
+                (player_id, game_date),
+            ).fetchall()
+        count = 0
+        for r in rows:
+            if (r["points"] or 0) >= 1:
+                break
+            count += 1
+        return count if count > 0 else 2
 
     def _team_recent_stats(self, team_abbr: str) -> dict:
         """Average team context over last 5 games."""
@@ -138,6 +270,26 @@ class TonightPredictor:
                 )
                 """,
                 (team_abbr,),
+            ).fetchone()
+        return dict(row) if row else {}
+
+    def _opp_defensive_stats(self, opp_team: str) -> dict:
+        """Average opponent defensive stats over last 5 games."""
+        with self._con() as con:
+            row = con.execute(
+                """
+                SELECT AVG(pk_pct)        AS opp_pk_pct,
+                       AVG(goals_allowed)  AS opp_goals_against_avg,
+                       AVG(shots_against)  AS opp_shots_against_avg
+                FROM  (
+                    SELECT pk_pct, goals_allowed, shots_against
+                    FROM   team_game_stats
+                    WHERE  team_abbr = ?
+                    ORDER  BY game_date DESC
+                    LIMIT  5
+                )
+                """,
+                (opp_team,),
             ).fetchone()
         return dict(row) if row else {}
 
@@ -169,6 +321,7 @@ class TonightPredictor:
     ) -> dict[str, Any]:
         rolling     = self._player_rolling(player["player_id"])
         team_ctx    = self._team_recent_stats(team_abbr)
+        opp_def_ctx = self._opp_defensive_stats(opp_team)
         goalie_ctx  = self._opp_goalie_rolling(opp_team)
 
         row: dict[str, Any] = {
@@ -190,13 +343,32 @@ class TonightPredictor:
             ("player_pp_toi_last5",       FEATURE_DEFAULTS["player_pp_toi_last5"]),
             ("player_last5_games_played", FEATURE_DEFAULTS["player_last5_games_played"]),
             ("player_last10_games_played",FEATURE_DEFAULTS["player_last10_games_played"]),
+            ("player_es_points_pct_last5",FEATURE_DEFAULTS["player_es_points_pct_last5"]),
         ]:
             row[feat] = rolling.get(feat) or default
+
+        # Schedule, head-to-head, venue, and situational context
+        row["days_rest"] = self._days_rest(player["player_id"], game_date)
+        row["games_last_7_days"] = self._games_last_7_days(player["player_id"], game_date)
+        row["h2h_points_per_game"] = self._h2h_history(player["player_id"], opp_team, game_date)
+        row["player_home_away_ppg"] = self._player_home_away_ppg(player["player_id"], home_away, game_date)
+        row["games_since_last_point"] = self._games_since_last_point(player["player_id"], game_date)
+
+        # Travel distance
+        from nhl_pipeline.model import travel_distance as _travel_dist
+        row["travel_distance"] = _travel_dist(team_abbr, opp_team, home_away)
 
         # Team context
         row["team_shots_for"]       = team_ctx.get("team_shots_for")       or FEATURE_DEFAULTS["team_shots_for"]
         row["team_pp_pct"]          = team_ctx.get("team_pp_pct")          or FEATURE_DEFAULTS["team_pp_pct"]
         row["team_faceoff_win_pct"] = team_ctx.get("team_faceoff_win_pct") or FEATURE_DEFAULTS["team_faceoff_win_pct"]
+
+        # Opponent defensive context
+        row["opp_pk_pct"] = opp_def_ctx.get("opp_pk_pct") or FEATURE_DEFAULTS["opp_pk_pct"]
+        row["opp_goals_against_avg"] = opp_def_ctx.get("opp_goals_against_avg") or FEATURE_DEFAULTS["opp_goals_against_avg"]
+        row["opp_shots_against_avg"] = opp_def_ctx.get("opp_shots_against_avg") or FEATURE_DEFAULTS["opp_shots_against_avg"]
+        row["opp_goals_against_venue"] = self._opp_goals_against_venue(opp_team, home_away, game_date)
+        row["opp_one_goal_game_pct"] = self._opp_one_goal_game_pct(opp_team, game_date)
 
         # Opponent goalie
         row["opp_goalie_recent_5g_save_pct"] = (

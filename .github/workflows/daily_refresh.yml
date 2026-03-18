@@ -2,15 +2,33 @@ name: NHL Daily Refresh
 
 on:
   schedule:
-    # Runs at 8:00 AM UTC every day during NHL season (Oct–Jun)
-    - cron: '0 8 * * *'
+    # Runs at 11:00 AM UTC (after most NHL games finish ~6 AM UTC)
+    - cron: '0 11 * * *'
   workflow_dispatch:
-    # Allows you to manually trigger from the GitHub Actions tab
+    inputs:
+      full_backfill:
+        description: 'Run full season backfill instead of daily'
+        required: false
+        type: boolean
+        default: false
+      backfill_start:
+        description: 'Backfill start date (YYYY-MM-DD), only used if full_backfill is true'
+        required: false
+        type: string
+        default: '2025-10-04'
+      backfill_end:
+        description: 'Backfill end date (YYYY-MM-DD), only used if full_backfill is true'
+        required: false
+        type: string
+        default: ''
+
+permissions:
+  contents: write
 
 jobs:
-  daily-refresh:
+  fetch-and-persist:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
@@ -28,35 +46,80 @@ jobs:
       - name: Create data directory
         run: mkdir -p data
 
-      - name: Download previous model & DB (if any)
+      # ── Restore DB from prior run artifact ──────────────────────────
+      - name: Download previous DB (if any)
         uses: actions/download-artifact@v4
         with:
-          name: nhl-pipeline-data
+          name: nhl-pipeline-db
           path: data/
-        continue-on-error: true  # first run won't have artifacts yet
+        continue-on-error: true
 
-      - name: "Step 1/4: Fetch schedule and rosters"
+      # ── Fetch real data from the NHL API ────────────────────────────
+      - name: "Step 1/5: Fetch schedule and rosters"
         run: python run_pipeline.py daily
-        continue-on-error: true
 
-      - name: "Step 2/4: Fetch player game logs"
+      - name: "Step 2/5: Backfill schedules (if requested)"
+        if: ${{ github.event.inputs.full_backfill == 'true' }}
+        run: |
+          END_DATE="${{ github.event.inputs.backfill_end }}"
+          if [ -z "$END_DATE" ]; then
+            END_DATE=$(date -u +%Y-%m-%d)
+          fi
+          python run_pipeline.py backfill \
+            --start "${{ github.event.inputs.backfill_start }}" \
+            --end "$END_DATE" \
+            --rosters
+
+      - name: "Step 3/5: Fetch player game logs"
         run: python run_pipeline.py gamelogs
-        continue-on-error: true
 
-      - name: "Step 3/4: Fetch team and goalie stats"
+      - name: "Step 4/5: Fetch team and goalie stats"
         run: python run_pipeline.py gamestats --season
         continue-on-error: true
 
-      - name: "Step 4/4: Retrain model"
+      - name: "Step 5/5: Retrain model"
         run: python run_pipeline.py train --model data/model.pkl
         continue-on-error: true
 
-      - name: Upload pipeline data
+      # ── Persist the DB as an artifact ───────────────────────────────
+      - name: Upload pipeline data artifact
         uses: actions/upload-artifact@v4
         with:
-          name: nhl-pipeline-data
+          name: nhl-pipeline-db
           path: |
             data/*.db
             data/*.pkl
           retention-days: 90
           overwrite: true
+
+      # ── Also commit the DB to the repo for easy access ──────────────
+      - name: Commit data to repository
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add --force data/nhl_pipeline.db
+          git add --force data/model.pkl 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "No data changes to commit."
+          else
+            git commit -m "chore: update NHL data $(date -u +%Y-%m-%d)"
+            git push
+          fi
+
+      # ── Show summary ────────────────────────────────────────────────
+      - name: Pipeline summary
+        if: always()
+        run: |
+          echo "## NHL Pipeline Run Summary" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "- **Date:** $(date -u +%Y-%m-%d)" >> "$GITHUB_STEP_SUMMARY"
+          if [ -f data/nhl_pipeline.db ]; then
+            DB_SIZE=$(du -h data/nhl_pipeline.db | cut -f1)
+            echo "- **DB size:** $DB_SIZE" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ -f data/model.pkl ]; then
+            MODEL_SIZE=$(du -h data/model.pkl | cut -f1)
+            echo "- **Model size:** $MODEL_SIZE" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "Run \`python run_pipeline.py streak-tiers --real-players\` locally to view streaks." >> "$GITHUB_STEP_SUMMARY"
