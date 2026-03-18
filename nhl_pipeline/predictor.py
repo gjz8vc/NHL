@@ -218,6 +218,41 @@ class TonightPredictor:
             ).fetchone()
         return row["pct"] if row and row["pct"] else 0.4
 
+    def _games_last_7_days(self, player_id: int, game_date: str) -> int:
+        """Number of games the player played in the 7 days before game_date."""
+        with self._con() as con:
+            row = con.execute(
+                """
+                SELECT COUNT(*) AS cnt
+                FROM   player_game_logs
+                WHERE  player_id = ?
+                  AND  game_date < ?
+                  AND  game_date >= DATE(?, '-7 days')
+                """,
+                (player_id, game_date, game_date),
+            ).fetchone()
+        return row["cnt"] if row else 3
+
+    def _games_since_last_point(self, player_id: int, game_date: str) -> int:
+        """Number of consecutive pointless games before game_date."""
+        with self._con() as con:
+            rows = con.execute(
+                """
+                SELECT points
+                FROM   player_game_logs
+                WHERE  player_id = ? AND game_date < ?
+                ORDER  BY game_date DESC
+                LIMIT  20
+                """,
+                (player_id, game_date),
+            ).fetchall()
+        count = 0
+        for r in rows:
+            if (r["points"] or 0) >= 1:
+                break
+            count += 1
+        return count if count > 0 else 2
+
     def _team_recent_stats(self, team_abbr: str) -> dict:
         """Average team context over last 5 games."""
         with self._con() as con:
@@ -312,10 +347,16 @@ class TonightPredictor:
         ]:
             row[feat] = rolling.get(feat) or default
 
-        # Days rest, head-to-head, and home/away split
+        # Schedule, head-to-head, venue, and situational context
         row["days_rest"] = self._days_rest(player["player_id"], game_date)
+        row["games_last_7_days"] = self._games_last_7_days(player["player_id"], game_date)
         row["h2h_points_per_game"] = self._h2h_history(player["player_id"], opp_team, game_date)
         row["player_home_away_ppg"] = self._player_home_away_ppg(player["player_id"], home_away, game_date)
+        row["games_since_last_point"] = self._games_since_last_point(player["player_id"], game_date)
+
+        # Travel distance
+        from nhl_pipeline.model import travel_distance as _travel_dist
+        row["travel_distance"] = _travel_dist(team_abbr, opp_team, home_away)
 
         # Team context
         row["team_shots_for"]       = team_ctx.get("team_shots_for")       or FEATURE_DEFAULTS["team_shots_for"]

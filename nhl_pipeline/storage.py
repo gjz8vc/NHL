@@ -420,6 +420,30 @@ SELECT
      ) og
     ) AS opp_one_goal_game_pct,
 
+    -- ── Schedule fatigue (games played in the 7 days before this game) ────
+    (SELECT COUNT(*)
+     FROM   player_game_logs sf
+     WHERE  sf.player_id = pgl.player_id
+       AND  sf.game_date < pgl.game_date
+       AND  sf.game_date >= DATE(pgl.game_date, '-7 days')
+    ) AS games_last_7_days,
+
+    -- ── Games since last point (cold streak detector) ─────────────────────
+    COALESCE(
+        (SELECT MIN(streak_cnt)
+         FROM   (
+             SELECT ROW_NUMBER() OVER (ORDER BY gslp.game_date DESC) AS streak_cnt,
+                    gslp.points
+             FROM   player_game_logs gslp
+             WHERE  gslp.player_id = pgl.player_id
+               AND  gslp.game_date < pgl.game_date
+             ORDER  BY gslp.game_date DESC
+         )
+         WHERE points >= 1
+        ),
+        5
+    ) AS games_since_last_point,
+
     -- ── Binary target ─────────────────────────────────────────────────────
     CASE
         WHEN (COALESCE(pgl.goals, 0) + COALESCE(pgl.assists, 0)) >= 1 THEN 1

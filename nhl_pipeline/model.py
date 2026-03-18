@@ -11,13 +11,16 @@ Player form (rolling):
     player_es_points_pct_last5
 
 Schedule context:
-    days_rest
+    days_rest, games_last_7_days
 
 Head-to-head:
     h2h_points_per_game
 
 Player situational:
-    player_home_away_ppg
+    player_home_away_ppg, games_since_last_point
+
+Travel:
+    travel_distance
 
 Team context:
     team_shots_for, team_pp_pct, team_faceoff_win_pct
@@ -66,8 +69,11 @@ NUMERIC_FEATURES = [
     "player_last10_games_played",
     "player_es_points_pct_last5",
     "days_rest",
+    "games_last_7_days",
     "h2h_points_per_game",
     "player_home_away_ppg",
+    "games_since_last_point",
+    "travel_distance",
     "team_shots_for",
     "team_pp_pct",
     "team_faceoff_win_pct",
@@ -98,8 +104,11 @@ FEATURE_DEFAULTS = {
     "player_last10_games_played": 10.0,
     "player_es_points_pct_last5": 0.5,
     "days_rest": 2.0,
+    "games_last_7_days": 3.0,
     "h2h_points_per_game": 0.3,
     "player_home_away_ppg": 0.3,
+    "games_since_last_point": 2.0,
+    "travel_distance": 500.0,
     "team_shots_for": 30.0,
     "team_pp_pct": 20.0,
     "team_faceoff_win_pct": 50.0,
@@ -118,6 +127,47 @@ FEATURE_DEFAULTS = {
 }
 
 
+# ── Arena coordinates (lat, lon) for travel distance calculation ───────────
+
+ARENA_COORDS: dict[str, tuple[float, float]] = {
+    "ANA": (33.81, -117.88), "ARI": (33.45, -112.07), "BOS": (42.37, -71.06),
+    "BUF": (42.87, -78.88), "CGY": (51.04, -114.05), "CAR": (35.80, -78.72),
+    "CHI": (41.88, -87.67), "COL": (39.76, -105.01), "CBJ": (39.97, -83.01),
+    "DAL": (32.79, -96.81), "DET": (42.34, -83.06), "EDM": (53.55, -113.50),
+    "FLA": (26.16, -80.33), "LAK": (34.04, -118.27), "MIN": (44.94, -93.10),
+    "MTL": (45.50, -73.57), "NSH": (36.16, -86.78), "NJD": (40.73, -74.17),
+    "NYI": (40.72, -73.99), "NYR": (40.75, -73.99), "OTT": (45.30, -75.93),
+    "PHI": (39.90, -75.17), "PIT": (40.44, -80.00), "SJS": (37.33, -121.90),
+    "SEA": (47.62, -122.35), "STL": (38.63, -90.20), "TBL": (27.94, -82.45),
+    "TOR": (43.64, -79.38), "UTA": (40.77, -111.90), "VAN": (49.28, -123.11),
+    "VGK": (36.10, -115.18), "WPG": (49.89, -97.14), "WSH": (38.90, -77.02),
+    "MDA": (28.0, -82.5),
+}
+
+
+def _haversine_miles(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in miles between two points."""
+    import math
+    R = 3959  # Earth radius in miles
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (math.sin(dlat / 2) ** 2 +
+         math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) *
+         math.sin(dlon / 2) ** 2)
+    return R * 2 * math.atan2(math.sqrt(a), math.sqrt(1 - a))
+
+
+def travel_distance(team_abbr: str, opponent_abbr: str, home_away: str) -> float:
+    """Estimated travel distance for the away team (0 for home team)."""
+    if home_away == "H":
+        return 0.0
+    c1 = ARENA_COORDS.get(team_abbr)
+    c2 = ARENA_COORDS.get(opponent_abbr)
+    if not c1 or not c2:
+        return FEATURE_DEFAULTS["travel_distance"]
+    return round(_haversine_miles(c1[0], c1[1], c2[0], c2[1]), 0)
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 def _prepare(rows: list[dict[str, Any]]) -> pd.DataFrame:
@@ -126,6 +176,15 @@ def _prepare(rows: list[dict[str, Any]]) -> pd.DataFrame:
 
     # Binary home indicator
     df["is_home"] = (df["home_away"].str.upper() == "H").astype(float)
+
+    # Travel distance (away team travels to opponent's arena)
+    if "travel_distance" not in df.columns:
+        df["travel_distance"] = df.apply(
+            lambda r: travel_distance(
+                r.get("team_abbr", ""), r.get("opponent_abbr", ""),
+                str(r.get("home_away", "H")).upper()
+            ), axis=1
+        )
 
     # Position dummies
     pos = df.get("position", pd.Series(dtype=str)).fillna("UNK")

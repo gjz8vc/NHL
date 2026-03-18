@@ -518,10 +518,13 @@ def build_feature_rows(
                 "player_last5_games_played":  5,
                 "player_last10_games_played": 10,
                 "player_es_points_pct_last5": 0.5,
-                # schedule, head-to-head, and venue split
+                # schedule, head-to-head, venue split, and situational
                 "days_rest":              2,
+                "games_last_7_days":      3,
                 "h2h_points_per_game":    ppg,  # use season avg as proxy
                 "player_home_away_ppg":   ppg,  # use season avg as proxy
+                "games_since_last_point": 2,
+                "travel_distance":        0.0 if home_away == "H" else 500.0,
                 # team context
                 "team_shots_for":        t_shots,
                 "team_pp_pct":           t_pp,
