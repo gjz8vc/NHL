@@ -142,57 +142,65 @@ class NHLPipeline:
         )
 
         # -- Rosters ---------------------------------------------------
-        roster_teams = list(teams or game_teams) or self.config.teams
-        if fetch_rosters:
-            rosters = self._roster_fetcher.fetch_all_teams(
-                teams=roster_teams, force=force_rosters
+        # Only process teams discovered in the lookback games.
+        # Do NOT fall back to all 32 teams — that wastes API quota.
+        roster_teams = list(teams or game_teams)
+        if not roster_teams:
+            log.warning(
+                "No teams discovered in lookback window — "
+                "skipping rosters, gamelogs, and game stats"
             )
-            for abbr, roster in rosters.items():
-                try:
-                    self._db.upsert_roster(roster)
-                    run.rosters_ok += 1
-                except Exception as exc:  # noqa: BLE001
-                    msg = f"DB upsert failed for {abbr} roster: {exc}"
-                    log.warning(msg)
-                    run.warnings.append(msg)
+        else:
+            if fetch_rosters:
+                rosters = self._roster_fetcher.fetch_all_teams(
+                    teams=roster_teams, force=force_rosters
+                )
+                for abbr, roster in rosters.items():
+                    try:
+                        self._db.upsert_roster(roster)
+                        run.rosters_ok += 1
+                    except Exception as exc:  # noqa: BLE001
+                        msg = f"DB upsert failed for {abbr} roster: {exc}"
+                        log.warning(msg)
+                        run.warnings.append(msg)
 
-        # -- Player game logs ------------------------------------------
-        log.info("Fetching player game logs for %d team(s) …", len(roster_teams))
-        try:
-            gl_stats = self.fetch_all_game_logs(teams=roster_teams, force=False)
-            total_gl = sum(gl_stats.values())
-            log.info("Game logs OK — %d player-game rows", total_gl)
-        except Exception as exc:  # noqa: BLE001
-            msg = f"Game log fetch failed: {exc}"
-            log.error(msg)
-            run.errors.append(msg)
+            # -- Player game logs --------------------------------------
+            log.info("Fetching player game logs for %d team(s) …", len(roster_teams))
+            try:
+                gl_stats = self.fetch_all_game_logs(teams=roster_teams, force=False)
+                total_gl = sum(gl_stats.values())
+                log.info("Game logs OK — %d player-game rows", total_gl)
+            except Exception as exc:  # noqa: BLE001
+                msg = f"Game log fetch failed: {exc}"
+                log.error(msg)
+                run.errors.append(msg)
 
-        # -- Team + goalie game stats ----------------------------------
-        # Only fetch stats for games in the lookback window, not the
-        # entire season (which would re-fetch hundreds of cached games
-        # and overwhelm the NHL API with requests).
-        lookback_game_records: list[dict] = []
-        for day in discovered_dates:
-            lookback_game_records.extend(self._db.get_games_for_date(day))
+            # -- Team + goalie game stats ------------------------------
+            # Only fetch stats for games in the lookback window, not the
+            # entire season (which would re-fetch hundreds of cached games
+            # and overwhelm the NHL API with requests).
+            lookback_game_records: list[dict] = []
+            for day in discovered_dates:
+                lookback_game_records.extend(self._db.get_games_for_date(day))
 
-        log.info(
-            "Fetching team/goalie stats for %d discovered game(s) …",
-            len(lookback_game_records),
-        )
-        try:
-            ts_list, gl_list = self._game_stats_fetcher.fetch_games(
-                lookback_game_records, force=False,
-            )
-            ts_rows = self._db.upsert_team_game_stats(ts_list)
-            gl_rows = self._db.upsert_goalie_game_logs(gl_list)
             log.info(
-                "Game stats OK — %d team-stat rows, %d goalie-log rows",
-                ts_rows, gl_rows,
+                "Fetching team/goalie stats for %d discovered game(s) …",
+                len(lookback_game_records),
             )
-        except Exception as exc:  # noqa: BLE001
-            msg = f"Game stats fetch failed: {exc}"
-            log.error(msg)
-            run.errors.append(msg)
+            try:
+                ts_list, gl_list = self._game_stats_fetcher.fetch_games(
+                    lookback_game_records, force=False,
+                )
+                ts_rows = self._db.upsert_team_game_stats(ts_list)
+                gl_rows = self._db.upsert_goalie_game_logs(gl_list)
+                log.info(
+                    "Game stats OK — %d team-stat rows, %d goalie-log rows",
+                    ts_rows, gl_rows,
+                )
+            except Exception as exc:  # noqa: BLE001
+                msg = f"Game stats fetch failed: {exc}"
+                log.error(msg)
+                run.errors.append(msg)
 
         run.finished_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
         self._db.save_run(run)
