@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Optional
 
 from nhlpy import NHLClient
@@ -100,18 +100,22 @@ class NHLPipeline:
         log.info("NHL Pipeline — daily run for %s  (run_id=%s)", date, run.run_id)
         log.info("=" * 60)
 
-        # -- Schedule --------------------------------------------------
-        try:
-            schedule = self._schedule_fetcher.fetch_date(date)
-            self._db.upsert_schedule(schedule)
-            run.schedules_ok += 1
-            log.info(
-                "Schedule OK — %d game(s) on %s", schedule.number_of_games, date
-            )
-        except RetryError as exc:
-            msg = f"Schedule fetch failed for {date}: {exc}"
-            log.error(msg)
-            run.errors.append(msg)
+        # -- Schedule (last 10 days) -----------------------------------
+        target = datetime.strptime(date, "%Y-%m-%d").date()
+        start = target - timedelta(days=9)
+        for day_offset in range(10):
+            day = (start + timedelta(days=day_offset)).isoformat()
+            try:
+                schedule = self._schedule_fetcher.fetch_date(day)
+                self._db.upsert_schedule(schedule)
+                run.schedules_ok += 1
+                log.info(
+                    "Schedule OK — %d game(s) on %s", schedule.number_of_games, day
+                )
+            except RetryError as exc:
+                msg = f"Schedule fetch failed for {day}: {exc}"
+                log.error(msg)
+                run.errors.append(msg)
 
         # -- Rosters ---------------------------------------------------
         if fetch_rosters:

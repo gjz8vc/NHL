@@ -39,25 +39,17 @@ jobs:
         continue-on-error: true
 
       # ── Fetch real data from the NHL API ────────────────────────────
-      - name: "Step 1/5: Fetch schedule and rosters"
+      - name: "Step 1/4: Fetch schedule and rosters (last 10 days)"
         run: python run_pipeline.py daily
 
-      - name: "Step 2/5: Backfill full season schedules"
-        run: |
-          END_DATE=$(date -u +%Y-%m-%d)
-          python run_pipeline.py backfill \
-            --start "2025-10-04" \
-            --end "$END_DATE" \
-            --rosters
-
-      - name: "Step 3/5: Fetch player game logs"
+      - name: "Step 2/4: Fetch player game logs"
         run: python run_pipeline.py gamelogs
 
-      - name: "Step 4/5: Fetch team and goalie stats"
+      - name: "Step 3/4: Fetch team and goalie stats"
         run: python run_pipeline.py gamestats --season
         continue-on-error: true
 
-      - name: "Step 5/5: Retrain model"
+      - name: "Step 4/4: Retrain model"
         run: python run_pipeline.py train --model data/model.pkl
         continue-on-error: true
 
