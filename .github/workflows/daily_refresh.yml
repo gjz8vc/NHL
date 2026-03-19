@@ -72,6 +72,7 @@ jobs:
             echo "No data changes to commit."
           else
             git commit -m "chore: update NHL data $(date -u +%Y-%m-%d)"
+            git pull --rebase
             git push
           fi
 
