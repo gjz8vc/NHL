@@ -195,9 +195,9 @@ class GameStatsFetcher:
         home_abbr: str,
         away_abbr: str,
     ) -> list[GoalieGameLog]:
-        by_game = boxscore.get("playerByGameStats", {})
-        home_goalies_raw = by_game.get("homeTeam", {}).get("goalies", [])
-        away_goalies_raw = by_game.get("awayTeam", {}).get("goalies", [])
+        by_game = boxscore.get("playerByGameStats") or {}
+        home_goalies_raw = (by_game.get("homeTeam") or {}).get("goalies") or []
+        away_goalies_raw = (by_game.get("awayTeam") or {}).get("goalies") or []
 
         kwargs = dict(game_id=game_id, season=season,
                       game_type=game_type, game_date=game_date)
