@@ -70,19 +70,24 @@ class NHLPipeline:
         fetch_rosters: bool = True,
         teams: Optional[list[str]] = None,
         force_rosters: bool = False,
+        lookback_games: int = 10,
     ) -> PipelineRun:
         """Run the full daily pipeline.
 
-        1. Fetch today's (or *date*'s) game schedule.
-        2. Persist schedule to JSON + SQLite.
-        3. Optionally refresh all (or *teams*) rosters.
+        1. Walk backwards from *date* fetching schedules until we have
+           *lookback_games* game-days (days with at least one NHL game).
+        2. Persist schedules to JSON + SQLite.
+        3. Optionally refresh rosters for teams found in those games.
+        4. Fetch player game logs for those teams.
+        5. Fetch team + goalie stats for the discovered games.
 
         Args:
-            date:          Date string (YYYY-MM-DD). Defaults to today (UTC).
-            fetch_rosters: When ``True`` (default) also refresh rosters.
-            teams:         Subset of team abbreviations to roster-fetch.
-                           Defaults to all 32 teams.
-            force_rosters: Bypass the roster cache and re-fetch from the API.
+            date:            Date string (YYYY-MM-DD). Defaults to today (UTC).
+            fetch_rosters:   When ``True`` (default) also refresh rosters.
+            teams:           Subset of team abbreviations to roster-fetch.
+                             Defaults to teams found in the fetched games.
+            force_rosters:   Bypass the roster cache and re-fetch from the API.
+            lookback_games:  Number of game-days to look back (default 10).
 
         Returns:
             A :class:`~nhl_pipeline.models.PipelineRun` summary.
@@ -100,27 +105,47 @@ class NHLPipeline:
         log.info("NHL Pipeline — daily run for %s  (run_id=%s)", date, run.run_id)
         log.info("=" * 60)
 
-        # -- Schedule (last 10 days) -----------------------------------
+        # -- Schedule (last N game-days) -------------------------------
         target = datetime.strptime(date, "%Y-%m-%d").date()
-        start = target - timedelta(days=9)
-        for day_offset in range(10):
-            day = (start + timedelta(days=day_offset)).isoformat()
+        game_days_found = 0
+        max_lookback = 30  # safety cap to avoid infinite walk-back
+        game_teams: set[str] = set()
+        discovered_dates: list[str] = []
+
+        for days_back in range(max_lookback):
+            day = (target - timedelta(days=days_back)).isoformat()
             try:
                 schedule = self._schedule_fetcher.fetch_date(day)
                 self._db.upsert_schedule(schedule)
                 run.schedules_ok += 1
-                log.info(
-                    "Schedule OK — %d game(s) on %s", schedule.number_of_games, day
-                )
+                if schedule.number_of_games > 0:
+                    game_days_found += 1
+                    discovered_dates.append(day)
+                    for g in schedule.games:
+                        game_teams.add(g.home_team.abbr)
+                        game_teams.add(g.away_team.abbr)
+                    log.info(
+                        "Schedule OK — %d game(s) on %s  [%d/%d game-days]",
+                        schedule.number_of_games, day,
+                        game_days_found, lookback_games,
+                    )
+                if game_days_found >= lookback_games:
+                    break
             except RetryError as exc:
                 msg = f"Schedule fetch failed for {day}: {exc}"
                 log.error(msg)
                 run.errors.append(msg)
 
+        log.info(
+            "Schedules done — %d game-day(s), %d team(s) discovered",
+            game_days_found, len(game_teams),
+        )
+
         # -- Rosters ---------------------------------------------------
+        roster_teams = list(teams or game_teams) or self.config.teams
         if fetch_rosters:
             rosters = self._roster_fetcher.fetch_all_teams(
-                teams=teams, force=force_rosters
+                teams=roster_teams, force=force_rosters
             )
             for abbr, roster in rosters.items():
                 try:
@@ -130,6 +155,44 @@ class NHLPipeline:
                     msg = f"DB upsert failed for {abbr} roster: {exc}"
                     log.warning(msg)
                     run.warnings.append(msg)
+
+        # -- Player game logs ------------------------------------------
+        log.info("Fetching player game logs for %d team(s) …", len(roster_teams))
+        try:
+            gl_stats = self.fetch_all_game_logs(teams=roster_teams, force=False)
+            total_gl = sum(gl_stats.values())
+            log.info("Game logs OK — %d player-game rows", total_gl)
+        except Exception as exc:  # noqa: BLE001
+            msg = f"Game log fetch failed: {exc}"
+            log.error(msg)
+            run.errors.append(msg)
+
+        # -- Team + goalie game stats ----------------------------------
+        # Only fetch stats for games in the lookback window, not the
+        # entire season (which would re-fetch hundreds of cached games
+        # and overwhelm the NHL API with requests).
+        lookback_game_records: list[dict] = []
+        for day in discovered_dates:
+            lookback_game_records.extend(self._db.get_games_for_date(day))
+
+        log.info(
+            "Fetching team/goalie stats for %d discovered game(s) …",
+            len(lookback_game_records),
+        )
+        try:
+            ts_list, gl_list = self._game_stats_fetcher.fetch_games(
+                lookback_game_records, force=False,
+            )
+            ts_rows = self._db.upsert_team_game_stats(ts_list)
+            gl_rows = self._db.upsert_goalie_game_logs(gl_list)
+            log.info(
+                "Game stats OK — %d team-stat rows, %d goalie-log rows",
+                ts_rows, gl_rows,
+            )
+        except Exception as exc:  # noqa: BLE001
+            msg = f"Game stats fetch failed: {exc}"
+            log.error(msg)
+            run.errors.append(msg)
 
         run.finished_at = datetime.utcnow().isoformat(timespec="seconds") + "Z"
         self._db.save_run(run)
