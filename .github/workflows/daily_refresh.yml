@@ -62,8 +62,12 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add --force data/nhl_pipeline.db
-          git add --force data/model.pkl 2>/dev/null || true
+          if [ -f data/nhl_pipeline.db ]; then
+            git add --force data/nhl_pipeline.db
+          fi
+          if [ -f data/model.pkl ]; then
+            git add --force data/model.pkl
+          fi
           if git diff --cached --quiet; then
             echo "No data changes to commit."
           else
