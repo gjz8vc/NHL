@@ -110,6 +110,7 @@ class NHLPipeline:
         game_days_found = 0
         max_lookback = 30  # safety cap to avoid infinite walk-back
         game_teams: set[str] = set()
+        discovered_dates: list[str] = []
 
         for days_back in range(max_lookback):
             day = (target - timedelta(days=days_back)).isoformat()
@@ -119,6 +120,7 @@ class NHLPipeline:
                 run.schedules_ok += 1
                 if schedule.number_of_games > 0:
                     game_days_found += 1
+                    discovered_dates.append(day)
                     for g in schedule.games:
                         game_teams.add(g.home_team.abbr)
                         game_teams.add(g.away_team.abbr)
@@ -157,7 +159,7 @@ class NHLPipeline:
         # -- Player game logs ------------------------------------------
         log.info("Fetching player game logs for %d team(s) …", len(roster_teams))
         try:
-            gl_stats = self.fetch_all_game_logs(teams=roster_teams, force=True)
+            gl_stats = self.fetch_all_game_logs(teams=roster_teams, force=False)
             total_gl = sum(gl_stats.values())
             log.info("Game logs OK — %d player-game rows", total_gl)
         except Exception as exc:  # noqa: BLE001
@@ -166,9 +168,23 @@ class NHLPipeline:
             run.errors.append(msg)
 
         # -- Team + goalie game stats ----------------------------------
-        log.info("Fetching team/goalie stats for discovered games …")
+        # Only fetch stats for games in the lookback window, not the
+        # entire season (which would re-fetch hundreds of cached games
+        # and overwhelm the NHL API with requests).
+        lookback_game_records: list[dict] = []
+        for day in discovered_dates:
+            lookback_game_records.extend(self._db.get_games_for_date(day))
+
+        log.info(
+            "Fetching team/goalie stats for %d discovered game(s) …",
+            len(lookback_game_records),
+        )
         try:
-            ts_rows, gl_rows = self.fetch_game_stats_for_season(force=False)
+            ts_list, gl_list = self._game_stats_fetcher.fetch_games(
+                lookback_game_records, force=False,
+            )
+            ts_rows = self._db.upsert_team_game_stats(ts_list)
+            gl_rows = self._db.upsert_goalie_game_logs(gl_list)
             log.info(
                 "Game stats OK — %d team-stat rows, %d goalie-log rows",
                 ts_rows, gl_rows,
